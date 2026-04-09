@@ -1,0 +1,48 @@
+{
+    "code": 0,
+    "data": [
+        {
+            "g0": 3020444,
+            "g1": "Super Maquina De Frutas",
+            "g10": 13,
+            "g2": "\/uploads\/wg\/default.png",
+            "g3": 0,
+            "g4": 0,
+            "g5": 1,
+            "g6": 0,
+            "g7": 1,
+            "g8": 1,
+            "g9": 3
+        },
+        {
+            "g0": 3020445,
+            "g1": "Dragon's Treasure",
+            "g10": 13,
+            "g2": "\/uploads\/wg\/default.png",
+            "g3": 0,
+            "g4": 0,
+            "g5": 1,
+            "g6": 0,
+            "g7": 1,
+            "g8": 1,
+            "g9": 3
+        },
+        {
+            "g0": 3020446,
+            "g1": "Dragon's Treasure",
+            "g10": 13,
+            "g2": "https:\/\/igamewin.com\/storage\/igamewin\/12002.avif",
+            "g3": 0,
+            "g4": 0,
+            "g5": 0,
+            "g6": 0,
+            "g7": 1,
+            "g8": 1,
+            "g9": 3
+        }
+    ],
+    "failed": false,
+    "msg": "success",
+    "success": true,
+    "timestamp": 1765871980414
+}

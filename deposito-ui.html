@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UI - Depósito (Referência)</title>
+  <link rel="stylesheet" href="/assets/deposito-ui.css">
+</head>
+<body>
+  <main class="deposit-ui">
+    <section class="deposit-card" aria-label="Painel de depósito">
+      <header class="deposit-header">
+        <button type="button" class="icon-btn" aria-label="Voltar">‹</button>
+        <h1>Depósito</h1>
+        <div class="header-actions" aria-hidden="true">
+          <span class="header-icon">◌</span>
+          <span class="header-icon">◔</span>
+        </div>
+      </header>
+
+      <section class="payment-section">
+        <h2 class="payment-title">Depósito online</h2>
+        <div class="payment-tabs" role="tablist" aria-label="Métodos de pagamento">
+          <button type="button" class="payment-tab is-active" role="tab" aria-selected="true">BRL-PIX</button>
+          <button type="button" class="payment-tab" role="tab" aria-selected="false">BRL-PIX</button>
+          <button type="button" class="payment-tab" role="tab" aria-selected="false">BRL-PIX</button>
+        </div>
+      </section>
+
+      <section class="amount-section">
+        <div class="amount-head">
+          <h3>Depósito</h3>
+          <button type="button" class="bonus-link">Explicação do evento de bônus</button>
+        </div>
+
+        <div class="amount-grid">
+          <button type="button" class="amount-chip">10</button>
+          <button type="button" class="amount-chip has-bonus"><span>50</span><small>+5</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>100</span><small>+10</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>500</span><small>+50</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>1.000</span><small>+100</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>3.000</span><small>+300</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>5.000</span><small>+500</small></button>
+          <button type="button" class="amount-chip has-bonus"><span>10.000</span><small>+1000</small></button>
+        </div>
+
+        <label class="custom-amount">
+          <span class="currency-prefix">R$</span>
+          <input type="text" placeholder="Mínimo10~Máximo50.000" aria-label="Digite o valor do depósito">
+        </label>
+      </section>
+
+      <p class="remember-label">Lembrete: Os valores de bônus são entregues apenas uma vez por conta.</p>
+
+      <section class="offer-box" aria-label="Oferta de depósito">
+        <header class="offer-header">
+          <div class="offer-title-wrap">
+            <span class="gift-icon">🎁</span>
+            <h4>Oferta de Depósito</h4>
+          </div>
+          <span class="offer-timer-badge">
+            <span class="timer-tag">⚡ LT</span>
+            <span class="timer-time">05:00:00.0</span>
+          </span>
+        </header>
+
+        <p class="offer-subtitle">----- Participou automaticamente das seguintes atividades -----</p>
+
+        <div class="offer-list">
+          <article class="offer-item">
+            <div class="offer-left">
+              <span class="offer-item-icon">🎁</span>
+              <strong>Bônus 5,00</strong>
+            </div>
+            <p>Primeiro depósito ≥ 50</p>
+          </article>
+
+          <article class="offer-item">
+            <div class="offer-left">
+              <span class="offer-item-icon">🎁</span>
+              <strong>Bônus 10,00</strong>
+            </div>
+            <p>Primeiro depósito ≥ 100</p>
+          </article>
+
+          <article class="offer-item">
+            <div class="offer-left">
+              <span class="offer-item-icon">🎁</span>
+              <strong>Bônus 50,00</strong>
+            </div>
+            <p>Primeiro depósito ≥ 500</p>
+          </article>
+        </div>
+
+        <button type="button" class="expand-btn">Expandir ˅</button>
+      </section>
+
+      <button type="button" class="submit-btn">Deposite agora</button>
+    </section>
+  </main>
+</body>
+</html>

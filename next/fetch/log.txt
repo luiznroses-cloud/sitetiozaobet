@@ -1,0 +1,372 @@
+[2025-10-23 22:47:42] Recebendo dados via POST.
+[2025-10-23 22:47:42] Dados recebidos: Array
+(
+    [user_id] => 864563901
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-10-23 22:47:42] Saldo atual do usuário: 0.00
+[2025-10-23 22:47:42] Log de adição de saldo registrado para o usuário 864563901: 100 em 2025-10-23 22:47:42
+[2025-10-23 22:47:42] Adicionando 100 ao saldo do usuário 864563901. Novo saldo: 100
+[2025-10-23 22:47:42] Saldo atualizado com sucesso para o usuário 864563901.
+[2025-10-28 15:24:50] Recebendo dados via POST.
+[2025-10-28 15:24:50] Dados recebidos: Array
+(
+    [user_id] => 572996910
+    [adicionar] => 20
+    [remover] => 0
+)
+
+[2025-10-28 15:24:50] Saldo atual do usuário: 0.00
+[2025-10-28 15:24:50] Log de adição de saldo registrado para o usuário 572996910: 20 em 2025-10-28 15:24:50
+[2025-10-28 15:24:50] Adicionando 20 ao saldo do usuário 572996910. Novo saldo: 20
+[2025-10-28 15:24:50] Saldo atualizado com sucesso para o usuário 572996910.
+[2025-10-29 16:34:49] Recebendo dados via POST.
+[2025-10-29 16:34:49] Dados recebidos: Array
+(
+    [user_id] => 389499613
+    [adicionar] => 500
+    [remover] => 0
+)
+
+[2025-10-29 16:34:49] Saldo atual do usuário: 10.00
+[2025-10-29 16:34:49] Log de adição de saldo registrado para o usuário 389499613: 500 em 2025-10-29 16:34:49
+[2025-10-29 16:34:49] Adicionando 500 ao saldo do usuário 389499613. Novo saldo: 510
+[2025-10-29 16:34:49] Saldo atualizado com sucesso para o usuário 389499613.
+[2025-11-02 21:12:13] Recebendo dados via POST.
+[2025-11-02 21:12:13] Dados recebidos: Array
+(
+    [user_id] => 330489191
+    [adicionar] => 500
+    [remover] => 0
+)
+
+[2025-11-02 21:12:13] Saldo atual do usuário: 10.00
+[2025-11-02 21:12:13] Log de adição de saldo registrado para o usuário 330489191: 500 em 2025-11-02 21:12:13
+[2025-11-02 21:12:13] Adicionando 500 ao saldo do usuário 330489191. Novo saldo: 510
+[2025-11-02 21:12:13] Saldo atualizado com sucesso para o usuário 330489191.
+[2025-11-03 01:43:55] Recebendo dados via POST.
+[2025-11-03 01:43:55] Dados recebidos: Array
+(
+    [user_id] => 146937324
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-03 01:43:55] Saldo atual do usuário: 0.00
+[2025-11-03 01:43:55] Log de adição de saldo registrado para o usuário 146937324: 100 em 2025-11-03 01:43:55
+[2025-11-03 01:43:55] Adicionando 100 ao saldo do usuário 146937324. Novo saldo: 100
+[2025-11-03 01:43:55] Saldo atualizado com sucesso para o usuário 146937324.
+[2025-11-03 03:38:41] Recebendo dados via POST.
+[2025-11-03 03:38:41] Dados recebidos: Array
+(
+    [user_id] => 976329271
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-03 03:38:41] Saldo atual do usuário: 0.00
+[2025-11-03 03:38:41] Log de adição de saldo registrado para o usuário 976329271: 100 em 2025-11-03 03:38:41
+[2025-11-03 03:38:41] Adicionando 100 ao saldo do usuário 976329271. Novo saldo: 100
+[2025-11-03 03:38:41] Saldo atualizado com sucesso para o usuário 976329271.
+[2025-11-03 11:41:40] Recebendo dados via POST.
+[2025-11-03 11:41:40] Dados recebidos: Array
+(
+    [user_id] => 961563663
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2025-11-03 11:41:40] Saldo atual do usuário: 0.00
+[2025-11-03 11:41:40] Log de adição de saldo registrado para o usuário 961563663: 10 em 2025-11-03 11:41:40
+[2025-11-03 11:41:40] Adicionando 10 ao saldo do usuário 961563663. Novo saldo: 10
+[2025-11-03 11:41:40] Saldo atualizado com sucesso para o usuário 961563663.
+[2025-11-03 11:53:08] Recebendo dados via POST.
+[2025-11-03 11:53:08] Dados recebidos: Array
+(
+    [user_id] => 248316482
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-03 11:53:08] Saldo atual do usuário: 0.00
+[2025-11-03 11:53:08] Log de adição de saldo registrado para o usuário 248316482: 100 em 2025-11-03 11:53:08
+[2025-11-03 11:53:08] Adicionando 100 ao saldo do usuário 248316482. Novo saldo: 100
+[2025-11-03 11:53:08] Saldo atualizado com sucesso para o usuário 248316482.
+[2025-11-05 13:11:20] Recebendo dados via POST.
+[2025-11-05 13:11:20] Dados recebidos: Array
+(
+    [user_id] => 915134297
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2025-11-05 13:11:20] Saldo atual do usuário: 0.00
+[2025-11-05 13:11:20] Log de adição de saldo registrado para o usuário 915134297: 10 em 2025-11-05 13:11:20
+[2025-11-05 13:11:20] Adicionando 10 ao saldo do usuário 915134297. Novo saldo: 10
+[2025-11-05 13:11:20] Saldo atualizado com sucesso para o usuário 915134297.
+[2025-11-13 13:28:55] Recebendo dados via POST.
+[2025-11-13 13:28:55] Dados recebidos: Array
+(
+    [user_id] => 458536573
+    [adicionar] => 200
+    [remover] => 0
+)
+
+[2025-11-13 13:28:55] Saldo atual do usuário: 0.00
+[2025-11-13 13:28:55] Log de adição de saldo registrado para o usuário 458536573: 200 em 2025-11-13 13:28:55
+[2025-11-13 13:28:55] Adicionando 200 ao saldo do usuário 458536573. Novo saldo: 200
+[2025-11-13 13:28:55] Saldo atualizado com sucesso para o usuário 458536573.
+[2025-11-13 17:34:06] Recebendo dados via POST.
+[2025-11-13 17:34:06] Dados recebidos: Array
+(
+    [user_id] => 701691548
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-13 17:34:06] Saldo atual do usuário: 0.00
+[2025-11-13 17:34:06] Log de adição de saldo registrado para o usuário 701691548: 100 em 2025-11-13 17:34:06
+[2025-11-13 17:34:06] Adicionando 100 ao saldo do usuário 701691548. Novo saldo: 100
+[2025-11-13 17:34:06] Saldo atualizado com sucesso para o usuário 701691548.
+[2025-11-15 00:50:19] Recebendo dados via POST.
+[2025-11-15 00:50:19] Dados recebidos: Array
+(
+    [user_id] => 201859493
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-15 00:50:19] Saldo atual do usuário: 0.00
+[2025-11-15 00:50:19] Log de adição de saldo registrado para o usuário 201859493: 100 em 2025-11-15 00:50:19
+[2025-11-15 00:50:19] Adicionando 100 ao saldo do usuário 201859493. Novo saldo: 100
+[2025-11-15 00:50:19] Saldo atualizado com sucesso para o usuário 201859493.
+[2025-11-15 15:29:36] Recebendo dados via POST.
+[2025-11-15 15:29:36] Dados recebidos: Array
+(
+    [user_id] => 120162937
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-15 15:29:36] Saldo atual do usuário: 0.00
+[2025-11-15 15:29:36] Log de adição de saldo registrado para o usuário 120162937: 100 em 2025-11-15 15:29:36
+[2025-11-15 15:29:36] Adicionando 100 ao saldo do usuário 120162937. Novo saldo: 100
+[2025-11-15 15:29:36] Saldo atualizado com sucesso para o usuário 120162937.
+[2025-11-16 14:42:20] Recebendo dados via POST.
+[2025-11-16 14:42:20] Dados recebidos: Array
+(
+    [user_id] => 329915540
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2025-11-16 14:42:20] Saldo atual do usuário: 0.00
+[2025-11-16 14:42:20] Log de adição de saldo registrado para o usuário 329915540: 10 em 2025-11-16 14:42:20
+[2025-11-16 14:42:20] Adicionando 10 ao saldo do usuário 329915540. Novo saldo: 10
+[2025-11-16 14:42:20] Saldo atualizado com sucesso para o usuário 329915540.
+[2025-11-16 15:01:44] Recebendo dados via POST.
+[2025-11-16 15:01:44] Dados recebidos: Array
+(
+    [user_id] => 467741464
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2025-11-16 15:01:44] Saldo atual do usuário: 0.00
+[2025-11-16 15:01:44] Log de adição de saldo registrado para o usuário 467741464: 10 em 2025-11-16 15:01:44
+[2025-11-16 15:01:44] Adicionando 10 ao saldo do usuário 467741464. Novo saldo: 10
+[2025-11-16 15:01:44] Saldo atualizado com sucesso para o usuário 467741464.
+[2025-11-20 01:56:56] Recebendo dados via POST.
+[2025-11-20 01:56:56] Dados recebidos: Array
+(
+    [user_id] => 780693234
+    [adicionar] => 1000
+    [remover] => 0
+)
+
+[2025-11-20 01:56:56] Saldo atual do usuário: 0.00
+[2025-11-20 01:56:56] Log de adição de saldo registrado para o usuário 780693234: 1000 em 2025-11-20 01:56:56
+[2025-11-20 01:56:56] Adicionando 1000 ao saldo do usuário 780693234. Novo saldo: 1000
+[2025-11-20 01:56:56] Saldo atualizado com sucesso para o usuário 780693234.
+[2025-11-24 14:36:55] Recebendo dados via POST.
+[2025-11-24 14:36:55] Dados recebidos: Array
+(
+    [user_id] => 467741464
+    [adicionar] => 1000
+    [remover] => 0
+)
+
+[2025-11-24 14:36:55] Saldo atual do usuário: 0.24
+[2025-11-24 14:36:55] Log de adição de saldo registrado para o usuário 467741464: 1000 em 2025-11-24 14:36:55
+[2025-11-24 14:36:55] Adicionando 1000 ao saldo do usuário 467741464. Novo saldo: 1000.24
+[2025-11-24 14:36:55] Saldo atualizado com sucesso para o usuário 467741464.
+[2025-11-24 19:11:04] Recebendo dados via POST.
+[2025-11-24 19:11:04] Dados recebidos: Array
+(
+    [user_id] => 510192823
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-11-24 19:11:04] Saldo atual do usuário: 0.00
+[2025-11-24 19:11:04] Log de adição de saldo registrado para o usuário 510192823: 100 em 2025-11-24 19:11:04
+[2025-11-24 19:11:04] Adicionando 100 ao saldo do usuário 510192823. Novo saldo: 100
+[2025-11-24 19:11:04] Saldo atualizado com sucesso para o usuário 510192823.
+[2025-11-25 10:41:21] Recebendo dados via POST.
+[2025-11-25 10:41:21] Dados recebidos: Array
+(
+    [user_id] => 288532450
+    [adicionar] => 20
+    [remover] => 0
+)
+
+[2025-11-25 10:41:21] Saldo atual do usuário: 0.00
+[2025-11-25 10:41:21] Log de adição de saldo registrado para o usuário 288532450: 20 em 2025-11-25 10:41:21
+[2025-11-25 10:41:21] Adicionando 20 ao saldo do usuário 288532450. Novo saldo: 20
+[2025-11-25 10:41:21] Saldo atualizado com sucesso para o usuário 288532450.
+[2025-12-03 18:43:31] Recebendo dados via POST.
+[2025-12-03 18:43:31] Dados recebidos: Array
+(
+    [user_id] => 994635850
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-12-03 18:43:31] Saldo atual do usuário: 0.00
+[2025-12-03 18:43:31] Log de adição de saldo registrado para o usuário 994635850: 100 em 2025-12-03 18:43:31
+[2025-12-03 18:43:31] Adicionando 100 ao saldo do usuário 994635850. Novo saldo: 100
+[2025-12-03 18:43:31] Saldo atualizado com sucesso para o usuário 994635850.
+[2025-12-08 18:07:49] Recebendo dados via POST.
+[2025-12-08 18:07:49] Dados recebidos: Array
+(
+    [user_id] => 195628495
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-12-08 18:07:49] Saldo atual do usuário: 0.00
+[2025-12-08 18:07:49] Log de adição de saldo registrado para o usuário 195628495: 100 em 2025-12-08 18:07:49
+[2025-12-08 18:07:49] Adicionando 100 ao saldo do usuário 195628495. Novo saldo: 100
+[2025-12-08 18:07:49] Saldo atualizado com sucesso para o usuário 195628495.
+[2025-12-08 18:08:32] Recebendo dados via POST.
+[2025-12-08 18:08:32] Dados recebidos: Array
+(
+    [user_id] => 569227328
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-12-08 18:08:32] Saldo atual do usuário: 0.00
+[2025-12-08 18:08:32] Log de adição de saldo registrado para o usuário 569227328: 100 em 2025-12-08 18:08:32
+[2025-12-08 18:08:32] Adicionando 100 ao saldo do usuário 569227328. Novo saldo: 100
+[2025-12-08 18:08:32] Saldo atualizado com sucesso para o usuário 569227328.
+[2025-12-08 18:09:09] Recebendo dados via POST.
+[2025-12-08 18:09:09] Dados recebidos: Array
+(
+    [user_id] => 197428463
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-12-08 18:09:09] Saldo atual do usuário: 0.00
+[2025-12-08 18:09:09] Log de adição de saldo registrado para o usuário 197428463: 100 em 2025-12-08 18:09:09
+[2025-12-08 18:09:09] Adicionando 100 ao saldo do usuário 197428463. Novo saldo: 100
+[2025-12-08 18:09:09] Saldo atualizado com sucesso para o usuário 197428463.
+[2025-12-08 18:09:41] Recebendo dados via POST.
+[2025-12-08 18:09:41] Dados recebidos: Array
+(
+    [user_id] => 540802214
+    [adicionar] => 100
+    [remover] => 0
+)
+
+[2025-12-08 18:09:41] Saldo atual do usuário: 0.00
+[2025-12-08 18:09:41] Log de adição de saldo registrado para o usuário 540802214: 100 em 2025-12-08 18:09:41
+[2025-12-08 18:09:41] Adicionando 100 ao saldo do usuário 540802214. Novo saldo: 100
+[2025-12-08 18:09:41] Saldo atualizado com sucesso para o usuário 540802214.
+[2025-12-11 09:28:01] Recebendo dados via POST.
+[2025-12-11 09:28:01] Dados recebidos: Array
+(
+    [user_id] => 339488120
+    [adicionar] => 15
+    [remover] => 0
+)
+
+[2025-12-11 09:28:01] Saldo atual do usuário: 0.00
+[2025-12-11 09:28:01] Log de adição de saldo registrado para o usuário 339488120: 15 em 2025-12-11 09:28:01
+[2025-12-11 09:28:01] Adicionando 15 ao saldo do usuário 339488120. Novo saldo: 15
+[2025-12-11 09:28:01] Saldo atualizado com sucesso para o usuário 339488120.
+[2026-01-01 20:52:07] Recebendo dados via POST.
+[2026-01-01 20:52:07] Dados recebidos: Array
+(
+    [user_id] => 954635750
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2026-01-01 20:52:07] Saldo atual do usuário: 0.00
+[2026-01-01 20:52:07] Log de adição de saldo registrado para o usuário 954635750: 10 em 2026-01-01 20:52:07
+[2026-01-01 20:52:07] Adicionando 10 ao saldo do usuário 954635750. Novo saldo: 10
+[2026-01-01 20:52:07] Saldo atualizado com sucesso para o usuário 954635750.
+[2026-01-02 02:19:10] Recebendo dados via POST.
+[2026-01-02 02:19:10] Dados recebidos: Array
+(
+    [user_id] => 983452589
+    [adicionar] => 20
+    [remover] => 0
+)
+
+[2026-01-02 02:19:10] Saldo atual do usuário: 0.00
+[2026-01-02 02:19:10] Log de adição de saldo registrado para o usuário 983452589: 20 em 2026-01-02 02:19:10
+[2026-01-02 02:19:10] Adicionando 20 ao saldo do usuário 983452589. Novo saldo: 20
+[2026-01-02 02:19:10] Saldo atualizado com sucesso para o usuário 983452589.
+[2026-01-10 20:08:13] Recebendo dados via POST.
+[2026-01-10 20:08:13] Dados recebidos: Array
+(
+    [user_id] => 474629937
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2026-01-10 20:08:13] Saldo atual do usuário: 1.30
+[2026-01-10 20:08:13] Log de adição de saldo registrado para o usuário 474629937: 10 em 2026-01-10 20:08:13
+[2026-01-10 20:08:13] Adicionando 10 ao saldo do usuário 474629937. Novo saldo: 11.3
+[2026-01-10 20:08:13] Saldo atualizado com sucesso para o usuário 474629937.
+[2026-01-10 20:08:38] Recebendo dados via POST.
+[2026-01-10 20:08:38] Dados recebidos: Array
+(
+    [user_id] => 106714407
+    [adicionar] => 10
+    [remover] => 0
+)
+
+[2026-01-10 20:08:38] Saldo atual do usuário: 0.00
+[2026-01-10 20:08:38] Log de adição de saldo registrado para o usuário 106714407: 10 em 2026-01-10 20:08:38
+[2026-01-10 20:08:38] Adicionando 10 ao saldo do usuário 106714407. Novo saldo: 10
+[2026-01-10 20:08:38] Saldo atualizado com sucesso para o usuário 106714407.
+[2026-01-15 15:01:51] Recebendo dados via POST.
+[2026-01-15 15:01:51] Dados recebidos: Array
+(
+    [user_id] => 233130394
+    [adicionar] => 11
+    [remover] => 0
+)
+
+[2026-01-15 15:01:51] Saldo atual do usuário: 0.00
+[2026-01-15 15:01:51] Log de adição de saldo registrado para o usuário 233130394: 11 em 2026-01-15 15:01:51
+[2026-01-15 15:01:51] Adicionando 11 ao saldo do usuário 233130394. Novo saldo: 11
+[2026-01-15 15:01:51] Saldo atualizado com sucesso para o usuário 233130394.
+[2026-01-15 15:01:54] Recebendo dados via POST.
+[2026-01-15 15:01:54] Dados recebidos: Array
+(
+    [user_id] => 233130394
+    [adicionar] => 1111
+    [remover] => 0
+)
+
+[2026-01-15 15:01:54] Saldo atual do usuário: 11.00
+[2026-01-15 15:01:54] Log de adição de saldo registrado para o usuário 233130394: 1111 em 2026-01-15 15:01:54
+[2026-01-15 15:01:54] Adicionando 1111 ao saldo do usuário 233130394. Novo saldo: 1122
+[2026-01-15 15:01:54] Saldo atualizado com sucesso para o usuário 233130394.

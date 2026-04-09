@@ -1,0 +1,421 @@
+[2025-11-16 19:42:18] Saldo adicionado com sucesso para usuário 467741464: +10 (saldo anterior: 0.10, novo saldo: 10.1)
+[2025-11-19 09:49:07] Saldo adicionado com sucesso para usuário 467741464: +5 (saldo anterior: 0.14, novo saldo: 5.14)
+[2025-12-08 17:38:10] Saldo adicionado com sucesso para usuário 790192847: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2025-12-08 20:32:54] Saldo adicionado com sucesso para usuário 635681889: +230 (saldo anterior: 0.00, novo saldo: 230)
+[2025-12-08 21:31:22] Saldo adicionado com sucesso para usuário 913827130: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2025-12-09 00:15:21] Saldo adicionado com sucesso para usuário 878306621: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 10:54:07] Saldo adicionado com sucesso para usuário 948798203: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 10:58:24] Saldo adicionado com sucesso para usuário 707380132: +20 (saldo anterior: 0.00, novo saldo: 20)[2025-12-09 11:03:51] Saldo adicionado com sucesso para usuário 519448588: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 11:03:51] Log de adição de saldo registrado para usuário 519448588
+[2025-12-09 21:12:24] Saldo adicionado com sucesso para usuário 171447486: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 21:12:24] Log de adição de saldo registrado para usuário 171447486
+[2025-12-09 21:34:36] Saldo adicionado com sucesso para usuário 798175636: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 21:34:36] Log de adição de saldo registrado para usuário 798175636
+[2025-12-09 22:08:14] Saldo adicionado com sucesso para usuário 101855754: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 22:08:14] Log de adição de saldo registrado para usuário 101855754
+[2025-12-09 23:49:10] Saldo adicionado com sucesso para usuário 169333959: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 23:49:10] Log de adição de saldo registrado para usuário 169333959
+[2025-12-09 23:53:09] Saldo adicionado com sucesso para usuário 615558081: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2025-12-09 23:53:09] Log de adição de saldo registrado para usuário 615558081
+[2025-12-09 23:55:11] Saldo adicionado com sucesso para usuário 422081232: +40 (saldo anterior: 0.00, novo saldo: 40)
+[2025-12-09 23:55:11] Log de adição de saldo registrado para usuário 422081232
+[2025-12-09 23:56:51] Saldo adicionado com sucesso para usuário 615558081: +20 (saldo anterior: 0.10, novo saldo: 20.1)
+[2025-12-09 23:56:51] Log de adição de saldo registrado para usuário 615558081
+[2025-12-09 23:58:46] Saldo adicionado com sucesso para usuário 565534254: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-09 23:58:46] Log de adição de saldo registrado para usuário 565534254
+[2025-12-10 00:11:06] Saldo adicionado com sucesso para usuário 615558081: +10 (saldo anterior: 0.30, novo saldo: 10.3)
+[2025-12-10 00:11:06] Log de adição de saldo registrado para usuário 615558081
+[2025-12-10 01:17:51] Saldo adicionado com sucesso para usuário 847826608: +41 (saldo anterior: 0.00, novo saldo: 41)
+[2025-12-10 01:17:51] Log de adição de saldo registrado para usuário 847826608
+[2025-12-10 01:21:36] Saldo adicionado com sucesso para usuário 744568099: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 01:21:36] Log de adição de saldo registrado para usuário 744568099
+[2025-12-10 01:23:49] Saldo adicionado com sucesso para usuário 938400848: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2025-12-10 01:23:49] Log de adição de saldo registrado para usuário 938400848
+[2025-12-10 03:43:39] Saldo adicionado com sucesso para usuário 474986759: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 03:43:39] Log de adição de saldo registrado para usuário 474986759
+[2025-12-10 05:21:05] Saldo adicionado com sucesso para usuário 130730989: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2025-12-10 05:21:05] Log de adição de saldo registrado para usuário 130730989
+[2025-12-10 05:27:53] Saldo adicionado com sucesso para usuário 175789703: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 05:27:53] Log de adição de saldo registrado para usuário 175789703
+[2025-12-10 06:23:16] Saldo adicionado com sucesso para usuário 944693874: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2025-12-10 06:23:16] Log de adição de saldo registrado para usuário 944693874
+[2025-12-10 06:56:40] Saldo adicionado com sucesso para usuário 287638699: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 06:56:40] Log de adição de saldo registrado para usuário 287638699
+[2025-12-10 08:13:03] Saldo adicionado com sucesso para usuário 367449175: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2025-12-10 08:13:03] Log de adição de saldo registrado para usuário 367449175
+[2025-12-10 08:29:38] Saldo adicionado com sucesso para usuário 565852768: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 08:29:38] Log de adição de saldo registrado para usuário 565852768
+[2025-12-10 08:52:07] Saldo adicionado com sucesso para usuário 173889186: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2025-12-10 08:52:07] Log de adição de saldo registrado para usuário 173889186
+[2025-12-10 09:45:50] Saldo adicionado com sucesso para usuário 654127086: +33 (saldo anterior: 0.00, novo saldo: 33)
+[2025-12-10 09:45:50] Log de adição de saldo registrado para usuário 654127086
+[2025-12-10 09:51:13] Saldo adicionado com sucesso para usuário 654127086: +24 (saldo anterior: 0.20, novo saldo: 24.2)
+[2025-12-10 09:51:13] Log de adição de saldo registrado para usuário 654127086
+[2025-12-10 14:50:03] Saldo adicionado com sucesso para usuário 622728445: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 14:50:03] Log de adição de saldo registrado para usuário 622728445
+[2025-12-10 16:24:59] Saldo adicionado com sucesso para usuário 922288578: +16 (saldo anterior: 0.00, novo saldo: 16)
+[2025-12-10 16:24:59] Log de adição de saldo registrado para usuário 922288578
+[2025-12-10 17:09:16] Saldo adicionado com sucesso para usuário 654127086: +25 (saldo anterior: 0.36, novo saldo: 25.36)
+[2025-12-10 17:09:16] Log de adição de saldo registrado para usuário 654127086
+[2025-12-10 17:17:09] Saldo adicionado com sucesso para usuário 654127086: +50 (saldo anterior: 0.30, novo saldo: 50.3)
+[2025-12-10 17:17:09] Log de adição de saldo registrado para usuário 654127086
+[2025-12-10 17:50:09] Saldo adicionado com sucesso para usuário 768556835: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 17:50:09] Log de adição de saldo registrado para usuário 768556835
+[2025-12-10 18:02:17] Saldo adicionado com sucesso para usuário 326726248: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2025-12-10 18:02:17] Log de adição de saldo registrado para usuário 326726248
+[2025-12-10 21:45:27] Saldo adicionado com sucesso para usuário 680214701: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-10 21:45:27] Log de adição de saldo registrado para usuário 680214701
+[2025-12-10 23:08:23] Saldo adicionado com sucesso para usuário 410650057: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2025-12-10 23:08:23] Log de adição de saldo registrado para usuário 410650057
+[2025-12-11 00:09:42] Saldo adicionado com sucesso para usuário 165489559: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-11 00:09:42] Log de adição de saldo registrado para usuário 165489559
+[2025-12-13 10:05:40] Saldo adicionado com sucesso para usuário 379855345: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2025-12-13 10:05:40] Log de adição de saldo registrado para usuário 379855345
+[2025-12-13 13:41:21] Saldo adicionado com sucesso para usuário 379855345: +30 (saldo anterior: 0.16, novo saldo: 30.16)
+[2025-12-13 13:41:21] Log de adição de saldo registrado para usuário 379855345
+[2025-12-22 01:38:53] Saldo adicionado com sucesso para usuário 376421720: +10 (saldo anterior: 0.00, novo saldo: 10)
+[2025-12-22 01:38:53] Log de adição de saldo registrado para usuário 376421720
+[2026-02-23 12:11:30] Saldo adicionado com sucesso para usuário 836129367: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 12:11:30] Log de adição de saldo registrado para usuário 836129367
+[2026-02-23 12:19:37] Saldo adicionado com sucesso para usuário 901339335: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-23 12:19:37] Log de adição de saldo registrado para usuário 901339335
+[2026-02-23 12:24:19] Saldo adicionado com sucesso para usuário 188169661: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 12:24:19] Log de adição de saldo registrado para usuário 188169661
+[2026-02-23 14:57:55] Saldo adicionado com sucesso para usuário 725247421: +87 (saldo anterior: 0.00, novo saldo: 87)
+[2026-02-23 14:57:55] Log de adição de saldo registrado para usuário 725247421
+[2026-02-23 16:58:14] Saldo adicionado com sucesso para usuário 314236096: +77 (saldo anterior: 0.00, novo saldo: 77)
+[2026-02-23 16:58:14] Log de adição de saldo registrado para usuário 314236096
+[2026-02-23 17:15:56] Saldo adicionado com sucesso para usuário 138325376: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-23 17:15:56] Log de adição de saldo registrado para usuário 138325376
+[2026-02-23 17:40:56] Saldo adicionado com sucesso para usuário 824747101: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-23 17:40:56] Log de adição de saldo registrado para usuário 824747101
+[2026-02-23 17:59:50] Saldo adicionado com sucesso para usuário 352664574: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-23 17:59:50] Log de adição de saldo registrado para usuário 352664574
+[2026-02-23 18:48:34] Saldo adicionado com sucesso para usuário 827266208: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-23 18:48:34] Log de adição de saldo registrado para usuário 827266208
+[2026-02-23 21:01:01] Saldo adicionado com sucesso para usuário 796775055: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-23 21:01:01] Log de adição de saldo registrado para usuário 796775055
+[2026-02-23 21:01:44] Saldo adicionado com sucesso para usuário 715895375: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-23 21:01:44] Log de adição de saldo registrado para usuário 715895375
+[2026-02-23 21:08:03] Saldo adicionado com sucesso para usuário 715895375: +11 (saldo anterior: 0.34, novo saldo: 11.34)
+[2026-02-23 21:08:03] Log de adição de saldo registrado para usuário 715895375
+[2026-02-23 21:12:45] Saldo adicionado com sucesso para usuário 715895375: +10 (saldo anterior: 0.23, novo saldo: 10.23)
+[2026-02-23 21:12:45] Log de adição de saldo registrado para usuário 715895375
+[2026-02-23 21:37:34] Saldo adicionado com sucesso para usuário 423745508: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 21:37:34] Log de adição de saldo registrado para usuário 423745508
+[2026-02-23 21:51:47] Saldo adicionado com sucesso para usuário 867471510: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 21:51:47] Log de adição de saldo registrado para usuário 867471510
+[2026-02-23 22:13:14] Saldo adicionado com sucesso para usuário 188759464: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-23 22:13:14] Log de adição de saldo registrado para usuário 188759464
+[2026-02-23 22:48:09] Saldo adicionado com sucesso para usuário 400013665: +35 (saldo anterior: 0.00, novo saldo: 35)
+[2026-02-23 22:48:09] Log de adição de saldo registrado para usuário 400013665
+[2026-02-23 23:23:00] Saldo adicionado com sucesso para usuário 551952218: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-23 23:23:00] Log de adição de saldo registrado para usuário 551952218
+[2026-02-23 23:23:57] Saldo adicionado com sucesso para usuário 976125806: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 23:23:57] Log de adição de saldo registrado para usuário 976125806
+[2026-02-23 23:27:29] Saldo adicionado com sucesso para usuário 881587174: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 23:27:29] Log de adição de saldo registrado para usuário 881587174
+[2026-02-23 23:38:32] Saldo adicionado com sucesso para usuário 989821738: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-23 23:38:32] Log de adição de saldo registrado para usuário 989821738
+[2026-02-24 00:00:44] Saldo adicionado com sucesso para usuário 800392571: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 00:00:44] Log de adição de saldo registrado para usuário 800392571
+[2026-02-24 00:01:35] Saldo adicionado com sucesso para usuário 494575146: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 00:01:35] Log de adição de saldo registrado para usuário 494575146
+[2026-02-24 00:02:15] Saldo adicionado com sucesso para usuário 759595962: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 00:02:15] Log de adição de saldo registrado para usuário 759595962
+[2026-02-24 00:06:45] Saldo adicionado com sucesso para usuário 574736359: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 00:06:45] Log de adição de saldo registrado para usuário 574736359
+[2026-02-24 00:06:53] Saldo adicionado com sucesso para usuário 390284731: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 00:06:53] Log de adição de saldo registrado para usuário 390284731
+[2026-02-24 00:09:09] Saldo adicionado com sucesso para usuário 352554863: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-24 00:09:09] Log de adição de saldo registrado para usuário 352554863
+[2026-02-24 00:16:53] Saldo adicionado com sucesso para usuário 910312475: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-24 00:16:53] Log de adição de saldo registrado para usuário 910312475
+[2026-02-24 00:17:54] Saldo adicionado com sucesso para usuário 574736359: +17 (saldo anterior: 0.20, novo saldo: 17.2)
+[2026-02-24 00:17:54] Log de adição de saldo registrado para usuário 574736359
+[2026-02-24 00:17:54] Saldo adicionado com sucesso para usuário 643894855: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 00:17:54] Log de adição de saldo registrado para usuário 643894855
+[2026-02-24 00:20:07] Saldo adicionado com sucesso para usuário 975568823: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-24 00:20:07] Log de adição de saldo registrado para usuário 975568823
+[2026-02-24 00:20:15] Saldo adicionado com sucesso para usuário 320679827: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 00:20:15] Log de adição de saldo registrado para usuário 320679827
+[2026-02-24 00:23:06] Saldo adicionado com sucesso para usuário 643894855: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 00:23:06] Log de adição de saldo registrado para usuário 643894855
+[2026-02-24 00:26:38] Saldo adicionado com sucesso para usuário 643894855: +10 (saldo anterior: 0.65, novo saldo: 10.65)
+[2026-02-24 00:26:38] Log de adição de saldo registrado para usuário 643894855
+[2026-02-24 00:32:40] Saldo adicionado com sucesso para usuário 643894855: +20 (saldo anterior: 0.18, novo saldo: 20.18)
+[2026-02-24 00:32:40] Log de adição de saldo registrado para usuário 643894855
+[2026-02-24 00:47:33] Saldo adicionado com sucesso para usuário 852517305: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-24 00:47:33] Log de adição de saldo registrado para usuário 852517305
+[2026-02-24 01:46:40] Saldo adicionado com sucesso para usuário 549638907: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-24 01:46:40] Log de adição de saldo registrado para usuário 549638907
+[2026-02-24 02:13:11] Saldo adicionado com sucesso para usuário 822763929: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 02:13:11] Log de adição de saldo registrado para usuário 822763929
+[2026-02-24 02:23:17] Saldo adicionado com sucesso para usuário 812759307: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-24 02:23:17] Log de adição de saldo registrado para usuário 812759307
+[2026-02-24 03:07:00] Saldo adicionado com sucesso para usuário 851378728: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 03:07:00] Log de adição de saldo registrado para usuário 851378728
+[2026-02-24 03:11:55] Saldo adicionado com sucesso para usuário 128477839: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 03:11:55] Log de adição de saldo registrado para usuário 128477839
+[2026-02-24 04:29:21] Saldo adicionado com sucesso para usuário 119057993: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 04:29:21] Log de adição de saldo registrado para usuário 119057993
+[2026-02-24 04:32:00] Saldo adicionado com sucesso para usuário 119057993: +25 (saldo anterior: 0.16, novo saldo: 25.16)
+[2026-02-24 04:32:00] Log de adição de saldo registrado para usuário 119057993
+[2026-02-24 07:32:38] Saldo adicionado com sucesso para usuário 353271214: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 07:32:38] Log de adição de saldo registrado para usuário 353271214
+[2026-02-24 07:52:31] Saldo adicionado com sucesso para usuário 741616860: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 07:52:31] Log de adição de saldo registrado para usuário 741616860
+[2026-02-24 11:57:43] Saldo adicionado com sucesso para usuário 173773040: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 11:57:43] Log de adição de saldo registrado para usuário 173773040
+[2026-02-24 12:13:52] Saldo adicionado com sucesso para usuário 150538067: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 12:13:52] Log de adição de saldo registrado para usuário 150538067
+[2026-02-24 12:17:32] Saldo adicionado com sucesso para usuário 169355291: +14 (saldo anterior: 0.00, novo saldo: 14)
+[2026-02-24 12:17:32] Log de adição de saldo registrado para usuário 169355291
+[2026-02-24 12:53:12] Saldo adicionado com sucesso para usuário 128477839: +20 (saldo anterior: 0.36, novo saldo: 20.36)
+[2026-02-24 12:53:12] Log de adição de saldo registrado para usuário 128477839
+[2026-02-24 13:39:53] Saldo adicionado com sucesso para usuário 727613286: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 13:39:53] Log de adição de saldo registrado para usuário 727613286
+[2026-02-24 14:11:16] Saldo adicionado com sucesso para usuário 546350033: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-24 14:11:16] Log de adição de saldo registrado para usuário 546350033
+[2026-02-24 14:14:29] Saldo adicionado com sucesso para usuário 929650565: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-24 14:14:29] Log de adição de saldo registrado para usuário 929650565
+[2026-02-24 14:24:40] Saldo adicionado com sucesso para usuário 929650565: +220 (saldo anterior: 0.36, novo saldo: 220.36)
+[2026-02-24 14:24:40] Log de adição de saldo registrado para usuário 929650565
+[2026-02-24 14:30:25] Saldo adicionado com sucesso para usuário 546350033: +50 (saldo anterior: 0.85, novo saldo: 50.85)
+[2026-02-24 14:30:25] Log de adição de saldo registrado para usuário 546350033
+[2026-02-24 14:30:45] Saldo adicionado com sucesso para usuário 178232803: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 14:30:45] Log de adição de saldo registrado para usuário 178232803
+[2026-02-24 14:34:08] Saldo adicionado com sucesso para usuário 103683165: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-24 14:34:08] Log de adição de saldo registrado para usuário 103683165
+[2026-02-24 14:39:31] Saldo adicionado com sucesso para usuário 436470845: +96 (saldo anterior: 0.00, novo saldo: 96)
+[2026-02-24 14:39:31] Log de adição de saldo registrado para usuário 436470845
+[2026-02-24 14:42:29] Saldo adicionado com sucesso para usuário 408701138: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 14:42:29] Log de adição de saldo registrado para usuário 408701138
+[2026-02-24 15:01:37] Saldo adicionado com sucesso para usuário 257607826: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 15:01:37] Log de adição de saldo registrado para usuário 257607826
+[2026-02-24 15:11:39] Saldo adicionado com sucesso para usuário 257607826: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 15:11:39] Log de adição de saldo registrado para usuário 257607826
+[2026-02-24 15:28:52] Saldo adicionado com sucesso para usuário 578087113: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 15:28:52] Log de adição de saldo registrado para usuário 578087113
+[2026-02-24 15:29:20] Saldo adicionado com sucesso para usuário 124806347: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 15:29:20] Log de adição de saldo registrado para usuário 124806347
+[2026-02-24 15:37:16] Saldo adicionado com sucesso para usuário 578087113: +15 (saldo anterior: 0.02, novo saldo: 15.02)
+[2026-02-24 15:37:16] Log de adição de saldo registrado para usuário 578087113
+[2026-02-24 16:09:54] Saldo adicionado com sucesso para usuário 544179086: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 16:09:54] Log de adição de saldo registrado para usuário 544179086
+[2026-02-24 16:22:03] Saldo adicionado com sucesso para usuário 545759211: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-24 16:22:03] Log de adição de saldo registrado para usuário 545759211
+[2026-02-24 16:33:03] Saldo adicionado com sucesso para usuário 178232803: +15 (saldo anterior: 0.60, novo saldo: 15.6)
+[2026-02-24 16:33:03] Log de adição de saldo registrado para usuário 178232803
+[2026-02-24 16:48:10] Saldo adicionado com sucesso para usuário 388926470: +17 (saldo anterior: 0.00, novo saldo: 17)
+[2026-02-24 16:48:10] Log de adição de saldo registrado para usuário 388926470
+[2026-02-24 17:13:29] Saldo adicionado com sucesso para usuário 274590690: +40 (saldo anterior: 0.00, novo saldo: 40)
+[2026-02-24 17:13:29] Log de adição de saldo registrado para usuário 274590690
+[2026-02-24 17:23:10] Saldo adicionado com sucesso para usuário 197730721: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 17:23:10] Log de adição de saldo registrado para usuário 197730721
+[2026-02-24 17:26:56] Saldo adicionado com sucesso para usuário 274590690: +30 (saldo anterior: 0.25, novo saldo: 30.25)
+[2026-02-24 17:26:56] Log de adição de saldo registrado para usuário 274590690
+[2026-02-24 17:29:56] Saldo adicionado com sucesso para usuário 124806347: +25 (saldo anterior: 0.08, novo saldo: 25.08)
+[2026-02-24 17:29:56] Log de adição de saldo registrado para usuário 124806347
+[2026-02-24 17:51:40] Saldo adicionado com sucesso para usuário 702827412: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-24 17:51:40] Log de adição de saldo registrado para usuário 702827412
+[2026-02-24 18:17:23] Saldo adicionado com sucesso para usuário 708362967: +220 (saldo anterior: 0.00, novo saldo: 220)
+[2026-02-24 18:17:23] Log de adição de saldo registrado para usuário 708362967
+[2026-02-24 18:45:18] Saldo adicionado com sucesso para usuário 301252992: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 18:45:18] Log de adição de saldo registrado para usuário 301252992
+[2026-02-24 19:04:37] Saldo adicionado com sucesso para usuário 484933041: +40 (saldo anterior: 0.00, novo saldo: 40)
+[2026-02-24 19:04:37] Log de adição de saldo registrado para usuário 484933041
+[2026-02-24 19:25:30] Saldo adicionado com sucesso para usuário 399414830: +60 (saldo anterior: 0.00, novo saldo: 60)
+[2026-02-24 19:25:30] Log de adição de saldo registrado para usuário 399414830
+[2026-02-24 19:35:57] Saldo adicionado com sucesso para usuário 859080847: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-24 19:35:57] Log de adição de saldo registrado para usuário 859080847
+[2026-02-24 19:41:06] Saldo adicionado com sucesso para usuário 565472305: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 19:41:06] Log de adição de saldo registrado para usuário 565472305
+[2026-02-24 19:44:30] Saldo adicionado com sucesso para usuário 242579372: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 19:44:30] Log de adição de saldo registrado para usuário 242579372
+[2026-02-24 20:22:26] Saldo adicionado com sucesso para usuário 575584828: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 20:22:26] Log de adição de saldo registrado para usuário 575584828
+[2026-02-24 20:33:42] Saldo adicionado com sucesso para usuário 535554752: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-24 20:33:42] Log de adição de saldo registrado para usuário 535554752
+[2026-02-24 20:53:07] Saldo adicionado com sucesso para usuário 909748379: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 20:53:07] Log de adição de saldo registrado para usuário 909748379
+[2026-02-24 21:02:47] Saldo adicionado com sucesso para usuário 909748379: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 21:02:47] Log de adição de saldo registrado para usuário 909748379
+[2026-02-24 21:03:47] Saldo adicionado com sucesso para usuário 868079142: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 21:03:47] Log de adição de saldo registrado para usuário 868079142
+[2026-02-24 21:20:45] Saldo adicionado com sucesso para usuário 939165398: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 21:20:45] Log de adição de saldo registrado para usuário 939165398
+[2026-02-24 21:25:28] Saldo adicionado com sucesso para usuário 834897408: +25 (saldo anterior: 0.00, novo saldo: 25)
+[2026-02-24 21:25:28] Log de adição de saldo registrado para usuário 834897408
+[2026-02-24 21:39:52] Saldo adicionado com sucesso para usuário 751692328: +12 (saldo anterior: 0.00, novo saldo: 12)
+[2026-02-24 21:39:52] Log de adição de saldo registrado para usuário 751692328
+[2026-02-24 21:52:19] Saldo adicionado com sucesso para usuário 718557349: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 21:52:19] Log de adição de saldo registrado para usuário 718557349
+[2026-02-24 21:58:21] Saldo adicionado com sucesso para usuário 475052506: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-24 21:58:21] Log de adição de saldo registrado para usuário 475052506
+[2026-02-24 22:14:04] Saldo adicionado com sucesso para usuário 894406361: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 22:14:04] Log de adição de saldo registrado para usuário 894406361
+[2026-02-24 22:16:25] Saldo adicionado com sucesso para usuário 344711500: +40 (saldo anterior: 0.00, novo saldo: 40)
+[2026-02-24 22:16:25] Log de adição de saldo registrado para usuário 344711500
+[2026-02-24 22:18:58] Saldo adicionado com sucesso para usuário 602488984: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 22:18:58] Log de adição de saldo registrado para usuário 602488984
+[2026-02-24 22:27:47] Saldo adicionado com sucesso para usuário 634232112: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-24 22:27:47] Log de adição de saldo registrado para usuário 634232112
+[2026-02-24 22:31:14] Saldo adicionado com sucesso para usuário 475052506: +30 (saldo anterior: 0.25, novo saldo: 30.25)
+[2026-02-24 22:31:14] Log de adição de saldo registrado para usuário 475052506
+[2026-02-24 22:35:26] Saldo adicionado com sucesso para usuário 118573929: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 22:35:26] Log de adição de saldo registrado para usuário 118573929
+[2026-02-24 22:36:56] Saldo adicionado com sucesso para usuário 881587174: +10 (saldo anterior: 0.05, novo saldo: 10.05)
+[2026-02-24 22:36:56] Log de adição de saldo registrado para usuário 881587174
+[2026-02-24 22:45:36] Saldo adicionado com sucesso para usuário 118573929: +10 (saldo anterior: 0.06, novo saldo: 10.06)
+[2026-02-24 22:45:36] Log de adição de saldo registrado para usuário 118573929
+[2026-02-24 22:49:09] Saldo adicionado com sucesso para usuário 699779556: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-24 22:49:09] Log de adição de saldo registrado para usuário 699779556
+[2026-02-24 22:53:52] Saldo adicionado com sucesso para usuário 118573929: +10 (saldo anterior: 0.08, novo saldo: 10.08)
+[2026-02-24 22:53:52] Log de adição de saldo registrado para usuário 118573929
+[2026-02-24 22:57:30] Saldo adicionado com sucesso para usuário 939012973: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 22:57:30] Log de adição de saldo registrado para usuário 939012973
+[2026-02-24 23:24:42] Saldo adicionado com sucesso para usuário 648477867: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 23:24:42] Log de adição de saldo registrado para usuário 648477867
+[2026-02-24 23:34:19] Saldo adicionado com sucesso para usuário 648477867: +10 (saldo anterior: 0.40, novo saldo: 10.4)
+[2026-02-24 23:34:19] Log de adição de saldo registrado para usuário 648477867
+[2026-02-24 23:36:52] Saldo adicionado com sucesso para usuário 648477867: +10 (saldo anterior: 0.30, novo saldo: 10.3)
+[2026-02-24 23:36:52] Log de adição de saldo registrado para usuário 648477867
+[2026-02-24 23:44:52] Saldo adicionado com sucesso para usuário 500017479: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-24 23:44:52] Log de adição de saldo registrado para usuário 500017479
+[2026-02-24 23:50:09] Saldo adicionado com sucesso para usuário 308751455: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-24 23:50:09] Log de adição de saldo registrado para usuário 308751455
+[2026-02-25 00:03:16] Saldo adicionado com sucesso para usuário 535554752: +50 (saldo anterior: 0.38, novo saldo: 50.38)
+[2026-02-25 00:03:16] Log de adição de saldo registrado para usuário 535554752
+[2026-02-25 00:09:33] Saldo adicionado com sucesso para usuário 140597315: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 00:09:33] Log de adição de saldo registrado para usuário 140597315
+[2026-02-25 00:18:24] Saldo adicionado com sucesso para usuário 500017479: +10 (saldo anterior: 0.40, novo saldo: 10.4)
+[2026-02-25 00:18:24] Log de adição de saldo registrado para usuário 500017479
+[2026-02-25 00:24:58] Saldo adicionado com sucesso para usuário 579133873: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 00:24:58] Log de adição de saldo registrado para usuário 579133873
+[2026-02-25 00:25:13] Saldo adicionado com sucesso para usuário 648477867: +10 (saldo anterior: 0.25, novo saldo: 10.25)
+[2026-02-25 00:25:13] Log de adição de saldo registrado para usuário 648477867
+[2026-02-25 00:28:40] Saldo adicionado com sucesso para usuário 648477867: +10 (saldo anterior: 0.20, novo saldo: 10.2)
+[2026-02-25 00:28:40] Log de adição de saldo registrado para usuário 648477867
+[2026-02-25 00:32:25] Saldo adicionado com sucesso para usuário 644927889: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 00:32:25] Log de adição de saldo registrado para usuário 644927889
+[2026-02-25 01:07:12] Saldo adicionado com sucesso para usuário 558693947: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 01:07:12] Log de adição de saldo registrado para usuário 558693947
+[2026-02-25 01:26:19] Saldo adicionado com sucesso para usuário 289566073: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-25 01:26:19] Log de adição de saldo registrado para usuário 289566073
+[2026-02-25 01:57:14] Saldo adicionado com sucesso para usuário 705114499: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-25 01:57:14] Log de adição de saldo registrado para usuário 705114499
+[2026-02-25 04:58:26] Saldo adicionado com sucesso para usuário 381491448: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 04:58:26] Log de adição de saldo registrado para usuário 381491448
+[2026-02-25 05:05:21] Saldo adicionado com sucesso para usuário 381491448: +50 (saldo anterior: 0.45, novo saldo: 50.45)
+[2026-02-25 05:05:21] Log de adição de saldo registrado para usuário 381491448
+[2026-02-25 05:12:27] Saldo adicionado com sucesso para usuário 381491448: +50 (saldo anterior: 0.22, novo saldo: 50.22)
+[2026-02-25 05:12:27] Log de adição de saldo registrado para usuário 381491448
+[2026-02-25 08:20:35] Saldo adicionado com sucesso para usuário 850741407: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-25 08:20:35] Log de adição de saldo registrado para usuário 850741407
+[2026-02-25 08:21:14] Saldo adicionado com sucesso para usuário 263580803: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-25 08:21:14] Log de adição de saldo registrado para usuário 263580803
+[2026-02-25 08:38:15] Saldo adicionado com sucesso para usuário 797405738: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-25 08:38:15] Log de adição de saldo registrado para usuário 797405738
+[2026-02-25 09:07:30] Saldo adicionado com sucesso para usuário 695370785: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-25 09:07:30] Log de adição de saldo registrado para usuário 695370785
+[2026-02-25 09:10:30] Saldo adicionado com sucesso para usuário 668248779: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-25 09:10:30] Log de adição de saldo registrado para usuário 668248779
+[2026-02-25 09:11:39] Saldo adicionado com sucesso para usuário 695370785: +30 (saldo anterior: 0.07, novo saldo: 30.07)
+[2026-02-25 09:11:39] Log de adição de saldo registrado para usuário 695370785
+[2026-02-25 09:17:13] Saldo adicionado com sucesso para usuário 668248779: +220 (saldo anterior: 0.08, novo saldo: 220.08)
+[2026-02-25 09:17:13] Log de adição de saldo registrado para usuário 668248779
+[2026-02-25 09:23:49] Saldo adicionado com sucesso para usuário 268946097: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 09:23:49] Log de adição de saldo registrado para usuário 268946097
+[2026-02-25 09:53:43] Saldo adicionado com sucesso para usuário 530235075: +165 (saldo anterior: 0.00, novo saldo: 165)
+[2026-02-25 09:53:43] Log de adição de saldo registrado para usuário 530235075
+[2026-02-25 11:19:55] Saldo adicionado com sucesso para usuário 521661845: +30 (saldo anterior: 0.00, novo saldo: 30)
+[2026-02-25 11:19:55] Log de adição de saldo registrado para usuário 521661845
+[2026-02-25 11:22:34] Saldo adicionado com sucesso para usuário 521661845: +50 (saldo anterior: 0.06, novo saldo: 50.06)
+[2026-02-25 11:22:34] Log de adição de saldo registrado para usuário 521661845
+[2026-02-25 11:25:28] Saldo adicionado com sucesso para usuário 759595962: +10 (saldo anterior: 0.24, novo saldo: 10.24)
+[2026-02-25 11:25:28] Log de adição de saldo registrado para usuário 759595962
+[2026-02-25 11:36:20] Saldo adicionado com sucesso para usuário 497111740: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 11:36:20] Log de adição de saldo registrado para usuário 497111740
+[2026-02-25 11:36:38] Saldo adicionado com sucesso para usuário 699373739: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 11:36:38] Log de adição de saldo registrado para usuário 699373739
+[2026-02-25 11:40:36] Saldo adicionado com sucesso para usuário 648906445: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 11:40:36] Log de adição de saldo registrado para usuário 648906445
+[2026-02-25 11:56:55] Saldo adicionado com sucesso para usuário 718159939: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 11:56:55] Log de adição de saldo registrado para usuário 718159939
+[2026-02-25 12:12:04] Saldo adicionado com sucesso para usuário 178232803: +10 (saldo anterior: 0.32, novo saldo: 10.32)
+[2026-02-25 12:12:04] Log de adição de saldo registrado para usuário 178232803
+[2026-02-25 12:26:06] Saldo adicionado com sucesso para usuário 960343591: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 12:26:06] Log de adição de saldo registrado para usuário 960343591
+[2026-02-25 12:26:24] Saldo adicionado com sucesso para usuário 642590426: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 12:26:24] Log de adição de saldo registrado para usuário 642590426
+[2026-02-25 12:31:00] Saldo adicionado com sucesso para usuário 139549640: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-25 12:31:00] Log de adição de saldo registrado para usuário 139549640
+[2026-02-25 12:35:19] Saldo adicionado com sucesso para usuário 401743293: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 12:35:19] Log de adição de saldo registrado para usuário 401743293
+[2026-02-25 12:41:49] Saldo adicionado com sucesso para usuário 193905404: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 12:41:49] Log de adição de saldo registrado para usuário 193905404
+[2026-02-25 12:51:42] Saldo adicionado com sucesso para usuário 700410402: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 12:51:42] Log de adição de saldo registrado para usuário 700410402
+[2026-02-25 12:58:59] Saldo adicionado com sucesso para usuário 480004646: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 12:58:59] Log de adição de saldo registrado para usuário 480004646
+[2026-02-25 13:00:26] Saldo adicionado com sucesso para usuário 700410402: +10 (saldo anterior: 0.20, novo saldo: 10.2)
+[2026-02-25 13:00:26] Log de adição de saldo registrado para usuário 700410402
+[2026-02-25 13:14:25] Saldo adicionado com sucesso para usuário 718640877: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 13:14:25] Log de adição de saldo registrado para usuário 718640877
+[2026-02-25 13:33:38] Saldo adicionado com sucesso para usuário 743307378: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-25 13:33:38] Log de adição de saldo registrado para usuário 743307378
+[2026-02-25 14:06:17] Saldo adicionado com sucesso para usuário 303270922: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 14:06:17] Log de adição de saldo registrado para usuário 303270922
+[2026-02-25 14:10:52] Saldo adicionado com sucesso para usuário 916932747: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-25 14:10:52] Log de adição de saldo registrado para usuário 916932747
+[2026-02-25 14:25:43] Saldo adicionado com sucesso para usuário 516496332: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-25 14:25:43] Log de adição de saldo registrado para usuário 516496332
+[2026-02-25 14:27:01] Saldo adicionado com sucesso para usuário 766080761: +27 (saldo anterior: 0.00, novo saldo: 27)
+[2026-02-25 14:27:01] Log de adição de saldo registrado para usuário 766080761
+[2026-02-25 14:30:05] Saldo adicionado com sucesso para usuário 116717830: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 14:30:05] Log de adição de saldo registrado para usuário 116717830
+[2026-02-25 14:30:32] Saldo adicionado com sucesso para usuário 242579372: +10 (saldo anterior: 0.25, novo saldo: 10.25)
+[2026-02-25 14:30:32] Log de adição de saldo registrado para usuário 242579372
+[2026-02-25 14:38:33] Saldo adicionado com sucesso para usuário 830461315: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 14:38:33] Log de adição de saldo registrado para usuário 830461315
+[2026-02-25 15:06:26] Saldo adicionado com sucesso para usuário 767987762: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-25 15:06:26] Log de adição de saldo registrado para usuário 767987762
+[2026-02-25 15:12:30] Saldo adicionado com sucesso para usuário 759595962: +10 (saldo anterior: 0.04, novo saldo: 10.04)
+[2026-02-25 15:12:30] Log de adição de saldo registrado para usuário 759595962
+[2026-02-25 15:20:19] Saldo adicionado com sucesso para usuário 244742055: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 15:20:19] Log de adição de saldo registrado para usuário 244742055
+[2026-02-25 15:27:26] Saldo adicionado com sucesso para usuário 875806361: +110 (saldo anterior: 0.00, novo saldo: 110)
+[2026-02-25 15:27:26] Log de adição de saldo registrado para usuário 875806361
+[2026-02-25 15:28:21] Saldo adicionado com sucesso para usuário 555722205: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 15:28:21] Log de adição de saldo registrado para usuário 555722205
+[2026-02-25 15:38:16] Saldo adicionado com sucesso para usuário 220345162: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 15:38:16] Log de adição de saldo registrado para usuário 220345162
+[2026-02-25 15:41:35] Saldo adicionado com sucesso para usuário 796883532: +50 (saldo anterior: 0.00, novo saldo: 50)
+[2026-02-25 15:41:35] Log de adição de saldo registrado para usuário 796883532
+[2026-02-25 15:56:13] Saldo adicionado com sucesso para usuário 907820414: +17 (saldo anterior: 0.00, novo saldo: 17)
+[2026-02-25 15:56:13] Log de adição de saldo registrado para usuário 907820414
+[2026-02-25 16:18:14] Saldo adicionado com sucesso para usuário 758942180: +15 (saldo anterior: 0.00, novo saldo: 15)
+[2026-02-25 16:18:14] Log de adição de saldo registrado para usuário 758942180
+[2026-02-25 16:32:00] Saldo adicionado com sucesso para usuário 897621667: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-02-25 16:32:00] Log de adição de saldo registrado para usuário 897621667
+[2026-02-25 16:53:56] Saldo adicionado com sucesso para usuário 897621667: +11 (saldo anterior: 0.13, novo saldo: 11.13)
+[2026-02-25 16:53:56] Log de adição de saldo registrado para usuário 897621667
+[2026-02-25 17:06:42] Saldo adicionado com sucesso para usuário 461764797: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-25 17:06:42] Log de adição de saldo registrado para usuário 461764797
+[2026-02-25 17:06:51] Saldo adicionado com sucesso para usuário 694979920: +40 (saldo anterior: 0.00, novo saldo: 40)
+[2026-02-25 17:06:51] Log de adição de saldo registrado para usuário 694979920
+[2026-02-26 12:14:05] Saldo adicionado com sucesso para usuário 234876762: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-26 12:14:05] Log de adição de saldo registrado para usuário 234876762
+[2026-02-26 12:15:38] Saldo adicionado com sucesso para usuário 234876762: +11 (saldo anterior: 11.00, novo saldo: 22)
+[2026-02-26 12:15:38] Log de adição de saldo registrado para usuário 234876762
+[2026-02-26 18:02:30] Saldo adicionado com sucesso para usuário 234876762: +11 (saldo anterior: 22.00, novo saldo: 33)
+[2026-02-26 18:02:30] Log de adição de saldo registrado para usuário 234876762
+[2026-02-26 18:10:00] Saldo adicionado com sucesso para usuário 234876762: +12 (saldo anterior: 33.00, novo saldo: 45)
+[2026-02-26 18:10:00] Log de adição de saldo registrado para usuário 234876762
+[2026-02-26 18:24:40] Saldo adicionado com sucesso para usuário 181540431: +11 (saldo anterior: 0.00, novo saldo: 11)
+[2026-02-26 18:24:40] Log de adição de saldo registrado para usuário 181540431
+[2026-02-26 18:35:40] Saldo adicionado com sucesso para usuário 181540431: +11 (saldo anterior: 11.00, novo saldo: 22)
+[2026-02-26 18:35:40] Log de adição de saldo registrado para usuário 181540431
+[2026-03-03 19:07:21] Saldo adicionado com sucesso para usuário 899819725: +20 (saldo anterior: 0.00, novo saldo: 20)
+[2026-03-03 19:07:21] Log de adição de saldo registrado para usuário 899819725

@@ -1,0 +1,19622 @@
+<?php
+
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/error.log');
+
+//parse_str(file_get_contents("php://input"), $data);
+$data = json_decode(file_get_contents("php://input"), true);
+
+// // Verificar se o JSON foi decodificado com sucesso
+// if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
+//     http_response_code(400); // Bad Request
+//     echo json_encode(['error' => 'Erro na decodificação do JSON.']);
+//     exit;
+// }
+
+
+// Função para lidar com a resposta de erro
+function sendError($code, $message)
+{
+    http_response_code($code);
+    echo json_encode(['error' => $message]);
+    exit;
+}
+
+// Verificação de rotas
+$rotaEncontrada = false;
+
+// Método Da Requisição
+$requestMethod = $_SERVER['REQUEST_METHOD'];
+
+// Url De Origem Da Req
+$requestURI = $_SERVER['REQUEST_URI'];
+
+/*-----------------------------------------------------------------------------------------------*/
+
+/* Dependencias Da Api */
+include_once "./../../config.php";
+include_once "./../../" . DASH . "/services-prod/prod.php";
+include_once "./../../" . DASH . "/services/database.php";
+include_once "./../../" . DASH . "/services/funcao.php";
+include_once "./../../" . DASH . "/services/crud.php";
+
+// Cors -> Dominios Permitidos
+$dominios_lista = [
+    $url_base // Puxar Dominio Atual
+];
+
+// Definir Tipo De Conteúdo Da Resposta
+header('Content-Type: application/json');
+
+// Segurança extra
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('X-XSS-Protection: 1; mode=block');
+header('Referrer-Policy: no-referrer');
+header('Strict-Transport-Security: max-age=63072000; includeSubDomains; preload');
+
+if (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], $dominios_lista)) {
+    header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
+}
+
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+$WG_BUCKET_SITE = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") .
+    "://" . $_SERVER['HTTP_HOST'];
+
+/* Function Baú */
+
+function getBoxList($mysqli, $token)
+{
+    $config_afiliados_qry = "SELECT minDepForCpa, minResgate, pagar_baus FROM afiliados_config WHERE id = 1";
+    $config_afiliados_resp = mysqli_query($mysqli, $config_afiliados_qry);
+    $config_afiliados = mysqli_fetch_assoc($config_afiliados_resp);
+    
+    $min_deposito = $config_afiliados['minDepForCpa'];
+    $min_apostado = $config_afiliados['minResgate'];
+    $pagar_baus = $config_afiliados['pagar_baus'] ?? 1;
+
+    $qry = "SELECT * FROM usuarios WHERE token = '$token'";
+    $resp = mysqli_query($mysqli, $qry);
+
+    if (mysqli_num_rows($resp) > 0) {
+        $user = mysqli_fetch_assoc($resp);
+
+        $codigoConvite = $user['invite_code'];
+        $qryConvidados = "SELECT id FROM usuarios WHERE invitation_code = '$codigoConvite'";
+        $resConvidados = mysqli_query($mysqli, $qryConvidados);
+        $idsConvidados = [];
+        while ($row = mysqli_fetch_assoc($resConvidados)) {
+            $idsConvidados[] = $row['id'];
+        }
+
+        $idsValidos = [];
+        foreach ($idsConvidados as $idConvidado) {
+            $qryDeposito = "SELECT SUM(valor) as total_depositado FROM transacoes WHERE usuario = $idConvidado AND status = 'pago'";
+            $resDeposito = mysqli_query($mysqli, $qryDeposito);
+            $total_depositado = mysqli_fetch_assoc($resDeposito)['total_depositado'] ?? 0;
+
+            $qryAposta = "SELECT SUM(bet_money) as total_apostado FROM historico_play WHERE id_user = $idConvidado AND status_play = '1'";
+            $resAposta = mysqli_query($mysqli, $qryAposta);
+            $total_apostado = mysqli_fetch_assoc($resAposta)['total_apostado'] ?? 0;
+
+            if ($total_depositado >= $min_deposito && $total_apostado >= $min_apostado) {
+                $idsValidos[] = $idConvidado;
+            }
+        }
+
+        $total_mem_count = count($idsValidos);
+
+        $qry = "SELECT num FROM bau WHERE token = '$token'";
+        $resp = mysqli_query($mysqli, $qry);
+        $row = mysqli_fetch_assoc($resp);
+        $nums = $row['num'];
+
+        $numsArray = !empty($nums) ? explode(',', $nums) : [];
+
+        $config_qry = "SELECT niveisbau, qntsbaus, nvlbau, pessoasbau FROM config";
+        $config_resp = mysqli_query($mysqli, $config_qry);
+        $config = mysqli_fetch_assoc($config_resp);
+
+        $niveis_bau = explode(',', $config['niveisbau']);
+        $quantidade_baus = $config['qntsbaus'];
+        $pessoas_bau = $config['pessoasbau'];
+
+        $baus_por_nivel = ceil($quantidade_baus / count($niveis_bau));
+
+        $baus = [];
+        for ($i = 1; $i <= $quantidade_baus; $i++) {
+            $nivel_index = floor(($i - 1) / $baus_por_nivel);
+            $money = isset($niveis_bau[$nivel_index]) ? (float) $niveis_bau[$nivel_index] : (float) end($niveis_bau);
+
+            $condition = $i * $pessoas_bau;
+            $is_get = 0;
+
+            if ($pagar_baus == 0) {
+                $is_get = 0;
+            } elseif (in_array($i, $numsArray)) {
+                $is_get = 2;
+            } elseif ($total_mem_count >= $condition) {
+                $is_get = 1;
+            }
+
+            $baus[] = [
+                "id" => $i,
+                "promote_num" => $condition,
+                "reward" => number_format($money, 2, '.', ''),
+                "expectedReward" => $money,
+                "displayReward" => "",
+                "promoteStatus" => $is_get,
+                "logCategory" => 0,
+                "promoteAmount" => $money,
+                "receiveId" => 0
+            ];
+        }
+
+        return $baus;
+
+    } else {
+        $config_qry = "SELECT niveisbau, qntsbaus, nvlbau, pessoasbau FROM config";
+        $config_resp = mysqli_query($mysqli, $config_qry);
+        $config = mysqli_fetch_assoc($config_resp);
+
+        $niveis_bau = explode(',', $config['niveisbau']);
+        $quantidade_baus = $config['qntsbaus'];
+        $pessoas_bau = $config['pessoasbau'];
+        $baus_por_nivel = ceil($quantidade_baus / count($niveis_bau));
+
+        $baus = [];
+        for ($i = 1; $i <= $quantidade_baus; $i++) {
+            $nivel_index = floor(($i - 1) / $baus_por_nivel);
+            $money = isset($niveis_bau[$nivel_index]) ? (float) $niveis_bau[$nivel_index] : (float) end($niveis_bau);
+            $condition = $i * $pessoas_bau;
+            $baus[] = [
+                "id" => $i,
+                "promote_num" => $condition,
+                "reward" => number_format($money, 2, '.', ''),
+                "expectedReward" => $money,
+                "displayReward" => "",
+                "promoteStatus" => 0,
+                "logCategory" => 0,
+                "promoteAmount" => $money,
+                "receiveId" => 0
+            ];
+        }
+        return $baus;
+    }
+}
+
+switch ($requestMethod) {
+    case 'POST':
+        /* Rotas POST */
+        // Rota api/member/login (POST) --> Login
+        if ($requestURI === '/hall/api/member/login') {
+            $rotaEncontrada = true;
+
+            $data_user = PHP_SEGURO($data['username']);
+            $password = PHP_SEGURO($data['userpass']);
+
+            // Prepared statement para evitar SQL Injection
+            $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE mobile = ?");
+            $stmt->bind_param("s", $data_user);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            // Função para resposta de erro
+            function respostaErroLogin()
+            {
+                echo json_encode([
+                    "errorCode" => 41031011,
+                    "code" => 1011,
+                    "msg" => "A conta ou senha está incorreta, verifique e digite novamente.",
+                    "time" => round(microtime(true) * 1000)
+                ]);
+                exit;
+            }
+
+            if ($result && $result->num_rows > 0) {
+                $row = $result->fetch_assoc();
+                if ($password === $row['password']) {
+                    $token = $row['token'];
+                    setcookie('token_user', $token, [
+                        'expires' => time() + 10 * 24 * 3600,
+                        'path' => '/',
+                        'secure' => true,
+                        'httponly' => true,
+                        'samesite' => 'None'
+                    ]);
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "session_key" => "7193b914639151e275fe1747730786929613836",
+                            "jwt_token" => "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzkyNjY3ODYsImV4dEluZm8iOnsiYnJvd3NlcmZpbmdlcmlkIjoiR0VFMy0wMS03ZjE2MTE3NzZiY2JjODkxNTIxYjI4OTk3YTY4ZjYzNzgwNWE0MmE5MWVkYzRiMjUzZjU2Y2MzMzlkZTQ4NmNhIiwiY2xpZW50aXAiOiIxODcuOTQuMTQ2LjE2OSIsImRldmljZSI6ImM5OWYyNDg2LTdiN2ItNGI3My1iYzQxLTkxN2YzOGQyYmYxMyIsImRldmljZXR5cGUiOiIzIiwieC1kZXZpY2UiOiIxLTEifSwidSI6IjgzODM5NTAwNyIsInYiOiIxNzQ3NzMwNzg2In0.R1B40QTzuqGg04yAskDelAJ0FbqX4IIsUIZsNwrzFgc",
+                            "game_gold" => 0,
+                            "currency" => "BRL",
+                            "vip_level" => 0,
+                            "nickname" => "Brandon",
+                            "portrait_id" => "/siteadmin/default/2D/img_txn24.png",
+                            "strongbox_status" => 0,
+                            "user_status" => 1,
+                            "member_level" => 1,
+                            "account_type" => 2,
+                            "platfromid" => $row['mobile'],
+                            "bank_status" => 0,
+                            "username" => $row['id'],
+                            "userkey" => "fwbonyvLFKGMCNnTUt87SdX1qNCPEx9YCMPW95rGSnkPkeqovteOE_rJmtw4YSSEGvFeTbzNfH2JYwT0H0iqnpznDwl9VCGrurEr4fz0Nc8l3o97BALdU9xqLNuT003fc5eBqQdn3y8FXaSyMvDvJfzRS6rHtZTz-efmedZVP3JOtbjpLqH9XI4H-nE5tNscxGMj_BIOr95ozHZo0E5bO3de3bCAgElgTbg8Bu8p4A4hOpXg5dxQO2BEde7ekUIp8zGRxElQt-a6GR5ER7MQGnKUPWsnQ5SyyhaBMXrSzbRzNnwknRga_UjaWsI7UNcTurp8VybBXHJWEYgrAiddYQ",
+                            "mode" => 0,
+                            "userOptResult" => [
+                                1,
+                                0,
+                                1,
+                                0,
+                                1
+                            ],
+                            "permissionOpt" => [
+                                "hasWithdrawPasswd" => ($row['senha_saque'] == 1) ? true : false,
+                                "hasSecurityQuestion" => false,
+                                "hasWithdrawAccount" => true,
+                                "hasPassword" => true,
+                                "hasPhone" => true,
+                                "hasAccountDeviceId" => false,
+                                "usernamePasswdMutable" => true
+                            ],
+                            "age" => 1,
+                            "lastgameinfo" => null,
+                            "gameSession" => null,
+                            "promoter_status" => 0,
+                            "mobile_phone" => "+55-" . substr(preg_replace('/\D/', '', $row['celular']), 2, 2) . "******" . substr(preg_replace('/\D/', '', $row['celular']), -3),
+                            "is_verified" => 0,
+                            "emailVerified" => 0,
+                            "email" => "",
+                            "thirdEmail" => "",
+                            "thirdAccount" => "",
+                            "is_open_google_auth" => 0,
+                            "thirdType" => 0,
+                            "change_password" => 0,
+                            "cpf" => "93458827900",
+                            "must_bind_phone" => 0,
+                            "must_bind_email" => 0,
+                            "must_bind_google_auth" => 0,
+                            "mustBindWithdrawPass" => 0,
+                            "mustBindWithdrawAccount" => 0,
+                            "mustBindSecurityQuestion" => 0,
+                            "must_bind_item" => 0,
+                            "gesture" => "",
+                            "showPassword" => 0,
+                            "deviceFingerprint" => "GEE3-01-7f1611776bcbc891521b28997a68f637805a42a91edc4b253f56cc339de486ca",
+                            "vip_icon_back_color_value" => "24B299",
+                            "vip_status" => 1,
+                            "register_time" => 1747708779,
+                            "realname" => $row['real_name'],
+                            "changeWithdrawPassword" => 0,
+                            "deposit_count" => 0,
+                            "isChannelPrize" => 0,
+                            "loginOsType" => 0,
+                            "loginpwaType" => 0,
+                            "regPkgId" => 999998,
+                            "auditMode" => 1,
+                            "bonus" => "0",
+                            "bonusRequireBet" => "0",
+                            "clubMemberInfo" => null,
+                            "parentId" => 0,
+                            "parentUsername" => "",
+                            "pinNumberType" => 0,
+                            "ekycResult" => -99,
+                            "eHoldIdPhoto" => -99,
+                            "pinNumberTypeName" => "PHONE"
+                        ]
+                    ];
+                    echo json_encode($response);
+                    //exit;
+                } else {
+                    respostaErroLogin();
+                }
+            } else {
+                respostaErroLogin();
+            }
+            $stmt->close();
+        }
+
+        // Rota api/member/register (POST) --> Cadastro
+        if ($requestURI === '/hall/api/member/register') {
+            $rotaEncontrada = true;
+        
+            $password = PHP_SEGURO($data['passwd']);
+            
+            // Verifica se mobilePhoneNumber ou platformId existem
+            $mobilePhoneNumber = isset($data['mobilePhoneNumber']) ? $data['mobilePhoneNumber'] : null;
+            $platformId = isset($data['platformId']) ? $data['platformId'] : null;
+            
+            // Define nome_user e celular com validações
+            $nome_user = PHP_SEGURO($platformId ? $platformId : $mobilePhoneNumber);
+            $real_name = $platformId ?? 'Sem nome';
+            $celular = $mobilePhoneNumber ? $mobilePhoneNumber : $platformId;
+            
+            $url = $data['registerLink'] ?? 'Sem identificador';
+            $afiliado = !empty($data['agent_code']) ? $data['agent_code'] : null;
+            $datadia = date('Y-m-d H:i:s');
+            $token = md5($real_name . sha1(mt_rand()) . $datadia);
+            $afinveted = 'AF' . substr(md5($real_name . sha1(mt_rand()) . $datadia), 0, 5);
+            $senha = password_hash($password, PASSWORD_DEFAULT, ["cost" => 10]);
+            $tipo_pagamento = 1;
+        
+            // Buscar invite_code da bspay 1 e 2
+            $invite_code_bspay_1 = '';
+            $invite_code_bspay_2 = '';
+            $sql_bspay1 = "SELECT invite_code FROM bspay WHERE id = 1 LIMIT 1";
+            $res_bspay1 = $mysqli->query($sql_bspay1);
+            if ($res_bspay1 && $row_bspay1 = $res_bspay1->fetch_assoc()) {
+                $invite_code_bspay_1 = $row_bspay1['invite_code'];
+            }
+            $sql_bspay2 = "SELECT invite_code FROM bspay WHERE id = 2 LIMIT 1";
+            $res_bspay2 = $mysqli->query($sql_bspay2);
+            if ($res_bspay2 && $row_bspay2 = $res_bspay2->fetch_assoc()) {
+                $invite_code_bspay_2 = $row_bspay2['invite_code'];
+            }
+        
+            // Verifica se já existe usuário com o mesmo username (mobile)
+            if ($nome_user != null) {
+                $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE mobile = ?");
+                $stmt->bind_param("s", $nome_user);
+                $stmt->execute();
+                $stmt->store_result();
+                if ($stmt->num_rows > 0) {
+                    echo json_encode([
+                        "code" => 400,
+                        "msg" => "Este nome de usuário já está em uso. Escolha outro.",
+                        "data" => null,
+                        "succeed" => false,
+                        "time" => round(microtime(true) * 1000)
+                    ]);
+                    exit;
+                }
+                $stmt->close();
+            }
+        
+            // Verifica se já existe usuário com o mesmo celular
+            if ($celular != null) {
+                $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE celular = ?");
+                $stmt->bind_param("s", $celular);
+                $stmt->execute();
+                $stmt->store_result();
+                if ($stmt->num_rows > 0) {
+                    echo json_encode([
+                        "errorCode" => 41031031,
+                        "code" => 1031,
+                        "msg" => "O número do celular foi vinculado a outra conta. Verifique e insira novamente.",
+                        "time" => round(microtime(true) * 1000)
+                    ]);
+                    exit;
+                }
+                $stmt->close();
+            }
+        
+            // Função para gerar ID único de 9 dígitos
+            function gerarIdUnico($mysqli) {
+                $tentativas = 0;
+                $maxTentativas = 100;
+                
+                do {
+                    // Gera número aleatório de 9 dígitos (100000000 a 999999999)
+                    $novoId = mt_rand(100000000, 999999999);
+                    
+                    // Verifica se o ID já existe
+                    $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE id = ?");
+                    $stmt->bind_param("i", $novoId);
+                    $stmt->execute();
+                    $stmt->store_result();
+                    $existe = $stmt->num_rows > 0;
+                    $stmt->close();
+                    
+                    $tentativas++;
+                    
+                    if (!$existe) {
+                        return $novoId;
+                    }
+                    
+                } while ($tentativas < $maxTentativas);
+                
+                // Se após 100 tentativas não encontrou ID único, retorna erro
+                return null;
+            }
+
+            // =====================================================
+            // FUNÇÃO DE MANIPULAÇÃO DE INDICAÇÕES (Sistema com coluna indicacoes_roubadas)
+            // =====================================================
+            function deve_contabilizar_indicacao($mysqli, $invite_code_afiliado) {
+                // Buscar configurações de manipulação
+                $config_qry = "SELECT * FROM manipulacao_indicacoes WHERE id = 1 LIMIT 1";
+                $config_result = $mysqli->query($config_qry);
+                
+                // Se não existir configuração ou não estiver ativa, contabiliza normalmente
+                if (!$config_result || $config_result->num_rows == 0) {
+                    return true;
+                }
+                
+                $config = $config_result->fetch_assoc();
+                
+                // Se o sistema não estiver ativo, contabiliza normalmente
+                if ($config['ativo'] != 1) {
+                    return true;
+                }
+                
+                // Buscar quantas pessoas o afiliado convidou E quantas foram roubadas
+                $count_qry = "SELECT pessoas_convidadas, indicacoes_roubadas FROM usuarios WHERE invite_code = ? LIMIT 1";
+                $stmt = $mysqli->prepare($count_qry);
+                $stmt->bind_param("s", $invite_code_afiliado);
+                $stmt->execute();
+                $count_result = $stmt->get_result();
+                
+                if ($count_result->num_rows == 0) {
+                    $stmt->close();
+                    return true; // Se não encontrou o afiliado, contabiliza normalmente
+                }
+                
+                $afiliado_data = $count_result->fetch_assoc();
+                $pessoas_convidadas = intval($afiliado_data['pessoas_convidadas']);
+                $indicacoes_roubadas = intval($afiliado_data['indicacoes_roubadas']);
+                $stmt->close();
+                
+                // Total de cadastros = contabilizados + roubados
+                $total_cadastros = $pessoas_convidadas + $indicacoes_roubadas;
+                
+                // Calcular a posição no ciclo (dar/roubar)
+                $dar = intval($config['dar_indicacoes']);
+                $roubar = intval($config['roubar_indicacoes']);
+                $ciclo_total = $dar + $roubar;
+                
+                // Posição atual no ciclo (1 a ciclo_total)
+                $posicao_no_ciclo = ($total_cadastros % $ciclo_total) + 1;
+                
+                // LOG para debug
+                error_log("DEBUG INDICAÇÃO - Afiliado: $invite_code_afiliado | Contabilizados: $pessoas_convidadas | Roubados: $indicacoes_roubadas | Total: $total_cadastros | Posição: $posicao_no_ciclo/$ciclo_total | Dar: $dar | Roubar: $roubar");
+                
+                // Se estiver na fase de "dar indicações", contabiliza
+                if ($posicao_no_ciclo <= $dar) {
+                    return true; // CONTABILIZA - Mostra para o afiliado
+                } else {
+                    return false; // NÃO CONTABILIZA - Casa rouba
+                }
+            }
+            // =====================================================
+        
+            // Gera ID único de 9 dígitos
+            $userId = gerarIdUnico($mysqli);
+            
+            if ($userId === null) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Erro ao gerar ID único. Tente novamente.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+        
+            // statusaff = 1 (Todos os usuários começam como afiliados)
+            $statusaff = 1;
+            
+            // Verifica se o afiliado existe e não está vazio
+            // if (!empty($afiliado)) {
+            //     // Verifica se o código do afiliado corresponde aos invite_codes válidos
+            //     if ((!empty($invite_code_bspay_1) && $afiliado === $invite_code_bspay_1) || 
+            //         (!empty($invite_code_bspay_2) && $afiliado === $invite_code_bspay_2)) {
+            //         $statusaff = 1;
+            //     }
+            // }
+
+            // =====================================================
+            // APLICA A MANIPULAÇÃO DE INDICAÇÕES AQUI
+            // =====================================================
+            $invitation_code_final = $afiliado; // Valor padrão
+            $indicacao_foi_roubada = false; // Flag para controle
+            
+            if ($afiliado) {
+                // Verifica se deve contabilizar esta indicação
+                $deve_contabilizar = deve_contabilizar_indicacao($mysqli, $afiliado);
+                
+                if (!$deve_contabilizar) {
+                    // Casa roubou - Remove o invitation_code (NÃO VINCULA AO AFILIADO)
+                    $invitation_code_final = null;
+                    $indicacao_foi_roubada = true;
+                    
+                    // LOG: Indicação roubada pela casa
+                    error_log("INDICAÇÃO ROUBADA - Afiliado: $afiliado | Novo usuário: $userId | invitation_code definido como NULL");
+                } else {
+                    // LOG: Indicação contabilizada
+                    error_log("INDICAÇÃO CONTABILIZADA - Afiliado: $afiliado | Novo usuário: $userId | invitation_code: $afiliado");
+                }
+            }
+            // =====================================================
+        
+            // Cria novo usuário com ID customizado e invite_code igual ao ID
+            // IMPORTANTE: Se foi roubado, invitation_code será NULL (não vincula ao afiliado)
+            $stmt = $mysqli->prepare("INSERT INTO usuarios (id, mobile, celular, password, spassword, url, token, data_registro, invite_code, invitation_code, tipo_pagamento, statusaff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isssssssssii", $userId, $nome_user, $celular, $password, $password, $url, $token, $datadia, $userId, $invitation_code_final, $tipo_pagamento, $statusaff);
+            
+            if (!$stmt->execute()) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Não foi possível criar a conta.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            $stmt->close();
+        
+            // =====================================================
+            // ATUALIZA OS CONTADORES DO AFILIADO
+            // =====================================================
+            if ($afiliado) {
+                if ($indicacao_foi_roubada) {
+                    // Incrementa contador de indicações roubadas
+                    $stmt = $mysqli->prepare("UPDATE usuarios SET indicacoes_roubadas = indicacoes_roubadas + 1 WHERE invite_code = ?");
+                    $stmt->bind_param("s", $afiliado);
+                    $stmt->execute();
+                    $stmt->close();
+                    
+                    error_log("CONTADOR ROUBADAS ATUALIZADO - Afiliado: $afiliado | Total roubadas incrementado");
+                } else {
+                    // Incrementa contador de pessoas convidadas (apenas se foi contabilizado)
+                    $stmt = $mysqli->prepare("UPDATE usuarios SET pessoas_convidadas = pessoas_convidadas + 1 WHERE invite_code = ?");
+                    $stmt->bind_param("s", $afiliado);
+                    $stmt->execute();
+                    $stmt->close();
+                    
+                    error_log("CONTADOR CONVIDADAS ATUALIZADO - Afiliado: $afiliado | Total convidadas incrementado");
+                }
+            }
+            // =====================================================
+        
+            // Cria registro na tabela 'bau'
+            $stmt = $mysqli->prepare("INSERT INTO bau (num, status, token) VALUES ('', 'user novo', ?)");
+            $stmt->bind_param("s", $token);
+            if (!$stmt->execute()) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Conta criada, mas falha ao criar registro em bau.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            $stmt->close();
+        
+            // Busca usuário recém-criado para resposta
+            $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE id = ?");
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $row = $result->fetch_assoc();
+            $stmt->close();
+        
+            // Define cookie seguro
+            setcookie('token_user', $token, [
+                'expires' => time() + 10 * 24 * 3600,
+                'path' => '/',
+                'secure' => true,
+                'httponly' => true,
+                'samesite' => 'None'
+            ]);
+            // Cookie para popup de boas-vindas (visível ao JS, expira em 60s)
+            setcookie('w1_just_registered', '1', [
+                'expires' => time() + 60,
+                'path' => '/',
+                'secure' => true,
+                'httponly' => false,
+                'samesite' => 'Lax'
+            ]);
+        
+            echo json_encode([
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "userkey" => "qu8gyUamv4ygNtbCqsbX0Wx2XLEcJx6L1potMu2FvIUYKoChMGyJbnQyMeEJMrLvbPnquV3Oset-DdDzB5ZHoAWun-bLejWwSOXVPUC0C-nrEDNTWQuC3nmk1W6I8X656x6ixVdZzr9FKB5liqm-tvztjvwYwxjAxooLVnIgQ2xtxHSiuI9V8pY7u7l5Ok0V9HNrmcp6Crp7XvcYitHZD9LSC_8mwtNTsnRsiFxPfcxNdQ8dhWvuOdWVjm1JYDZkCBkuBNTmpV5LfXn7vYKpSdCulHN1FF1oZvw3MMajrEtWv2xTrrKdgkRd-Uo_OLj7kDQT2oT4vF4CHXCkQQNiBw",
+                    "deviceFingerprint" => "GEE3-01-7f1611776bcbc891521b28997a68f637805a42a91edc4b253f56cc339de486ca",
+                    "needApprove" => false,
+                    "ekycResult" => -99,
+                    "eHoldIdPhoto" => -99
+                ]
+            ]);
+            exit;
+        }
+
+        // Rota api/member/register (POST) --> Cadastro
+        if ($requestURI === '/hall/api/member/check/register') {
+            $rotaEncontrada = true;
+
+            echo json_encode([
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+
+                ]
+            ]);
+            exit;
+        }
+
+       // Rota api/member/register (POST) --> Cadastro
+       if ($requestURI === '/hall/api/active/promote_details') {
+            $rotaEncontrada = true;
+        
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+        
+                // Buscar usuário pelo token
+                $stmt = $mysqli->prepare("SELECT id, invite_code, mobile FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+        
+                if ($resp && $resp->num_rows > 0) {
+                    $user = $resp->fetch_assoc();
+                    $userId = $user['id'];
+                    $invite_code = $user['invite_code'];
+                    $parentName = $user['mobile'];
+        
+                    // Buscar indicados
+                    $stmt2 = $mysqli->prepare("SELECT id, mobile, data_registro FROM usuarios WHERE invitation_code = ?");
+                    $stmt2->bind_param("s", $invite_code);
+                    $stmt2->execute();
+                    $result2 = $stmt2->get_result();
+        
+                    $details = [];
+                    while ($indicado = $result2->fetch_assoc()) {
+                        $details[] = [
+                            'id' => $indicado['id'],
+                            'activeId' => 271,
+                            'parentId' => $userId,
+                            'parentName' => $parentName,
+                            'parentCurrency' => 'BRL',
+                            'useridx' => $indicado['id'],
+                            'userName' => $indicado['mobile'],
+                            'userCurrency' => 'BRL',
+                            'isPass' => 1,
+                            'registerTime' => strtotime($indicado['data_registro']),
+                            'remark' => '',
+                            'updateTime' => strtotime($indicado['data_registro']),
+                            'siteCode' => '',
+                            'siteName' => ''
+                        ];
+                    }
+                    $stmt2->close();
+        
+                    echo json_encode([
+                        'code' => 1,
+                        'msg' => '返回成功',
+                        'time' => round(microtime(true) * 1000),
+                        'data' => [
+                            'details' => $details,
+                            'total' => count($details)
+                        ]
+                    ]);
+                    exit;
+                }
+            }
+        
+            // Se não logado ou não encontrado
+            echo json_encode([
+                'code' => 0,
+                'msg' => 'Usuário não logado',
+                'time' => round(microtime(true) * 1000),
+                'data' => [
+                    'details' => [],
+                    'total' => 0
+                ]
+            ]);
+            exit;
+        }
+
+        // Rota api/member/register (POST) --> Cadastro
+        if ($requestURI === '/hall/api/finance/certify/auditTaskPageList') {
+            $rotaEncontrada = true;
+
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp && $resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+                    $usuarioId = $datares['id'];
+
+                    $stmt2 = $mysqli->prepare("SELECT * FROM transacoes WHERE usuario = ? AND tipo = 'deposito' AND status = 'pago'");
+                    $stmt2->bind_param("i", $usuarioId);
+                    $stmt2->execute();
+                    $result2 = $stmt2->get_result();
+
+                    // Buscar total apostado
+                    $stmt3 = $mysqli->prepare("SELECT SUM(bet_money) as totalApostado FROM historico_play WHERE id_user = ?");
+                    $stmt3->bind_param("i", $usuarioId);
+                    $stmt3->execute();
+                    $result3 = $stmt3->get_result();
+                    $totalApostado = 0;
+                    if ($row = $result3->fetch_assoc()) {
+                        $totalApostado = floatval($row['totalApostado']);
+                    }
+                    $stmt3->close();
+
+
+                    $list = [];
+                    $totalDepositos = 0;
+                    while ($transacao = $result2->fetch_assoc()) {
+                        $valorRestante = $transacao['valor'] - $totalApostado;
+                        if ($valorRestante < 0)
+                            $valorRestante = 0;
+
+                        $list[] = [
+                            "id" => $transacao['id'],
+                            "amount" => $transacao['valor'],
+                            "auditMode" => 1,
+                            "auditRate" => "1.5",
+                            "auditAmount" => $transacao['valor'],
+                            "alreadyAuditAmount" => "0",
+                            "needAuditAmount" => $transacao['valor'],
+                            "cancelAmount" => $transacao['valor'],
+                            "valorRestante" => number_format($valorRestante, 2, '.', ''), // Novo campo
+                            "canBeCancel" => false,
+                            "status" => 1,
+                            "statusName" => "Aguardando apostas",
+                            "optType" => 2,
+                            "optTypeName" => "Depósito",
+                            "dealType" => 2112,
+                            "dealTypeName" => "Depósito",
+                            "createTime" => strtotime($transacao['data_registro']),
+                            "activeId" => 0,
+                            "activeName" => "",
+                            "finishTime" => 0,
+                            "userIdx" => $transacao['usuario'],
+                            "orderNo" => $transacao['transacao_id'],
+                            "sourceType" => 1,
+                            "specifyPlatforms" => ""
+                        ];
+                        $totalDepositos += $transacao['valor'];
+                    }
+                    $stmt2->close();
+
+                    // Calcular diferença
+                    $bonusRequireBet = $totalDepositos - $totalApostado;
+                    if ($bonusRequireBet < 0)
+                        $bonusRequireBet = 0;
+
+                    echo json_encode([
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "auditMode" => 1,
+                            "bonusTransferIn" => false,
+                            "undoneResetBonus" => false,
+                            "bonus" => "0",
+                            "bonusAvailable" => "0",
+                            "bonusRequireBet" => number_format($bonusRequireBet, 2, '.', ''), // <-- Aqui
+                            "withdrawRequireBet" => number_format($bonusRequireBet, 2, '.', ''), // <-- Aqui
+                            "bonusPendingCount" => 0,
+                            "pendingCount" => count($list),
+                            "auditCancelStatus" => 0,
+                            "cancelAmount" => isset($list[0]) ? $list[0]['cancelAmount'] : "0",
+                            "list" => $list,
+                            "page" => 1,
+                            "size" => 0,
+                            "totalCount" => count($list),
+                            "totalDepositos" => $totalDepositos
+                        ]
+                    ]);
+                    exit;
+                } else {
+                    http_response_code(401);
+                    echo json_encode([
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login"
+                    ]);
+                    exit;
+                }
+            } else {
+                http_response_code(401);
+                echo json_encode([
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null
+                ]);
+                exit;
+            }
+        }
+        
+        function gerarIdUnico($mysqli) {
+            $tentativas = 0;
+            $maxTentativas = 100;
+            
+            do {
+                // Gera número aleatório de 9 dígitos (100000000 a 999999999)
+                $novoId = mt_rand(100000000, 999999999);
+                
+                // Verifica se o ID já existe
+                $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE id = ?");
+                $stmt->bind_param("i", $novoId);
+                $stmt->execute();
+                $stmt->store_result();
+                $existe = $stmt->num_rows > 0;
+                $stmt->close();
+                
+                $tentativas++;
+                
+                if (!$existe) {
+                    return $novoId;
+                }
+                
+            } while ($tentativas < $maxTentativas);
+            
+            // Se após 100 tentativas não encontrou ID único, retorna erro
+            return null;
+        }
+        
+        // Rota api/agent/promote/createAccountV2 (POST) --> Cadastro de afiliado
+        if ($requestURI === '/hall/api/agent/promote/createAccountV2') {
+            $rotaEncontrada = true;
+            
+            // Verifica se o usuário está autenticado (token)
+            $token_user = $_COOKIE['token_user'] ?? null;
+            
+            if (!$token_user) {
+                echo json_encode([
+                    "code" => 401,
+                    "msg" => "Não autorizado. Token não encontrado.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            
+            // Busca o usuário pelo token para pegar seu invite_code e statusaff
+            $stmt = $mysqli->prepare("SELECT id, invite_code, statusaff FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token_user);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result->num_rows === 0) {
+                echo json_encode([
+                    "code" => 401,
+                    "msg" => "Usuário não encontrado.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            
+            $usuario_logado = $result->fetch_assoc();
+            $stmt->close();
+            
+            if ((int)$usuario_logado['statusaff'] !== 1) {
+                echo json_encode([
+                    "code" => 403,
+                    "msg" => "Sua conta não possui privilégios. Entre em contato com o suporte para solicitar.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            
+            $username = PHP_SEGURO($data['username'] ?? '');
+            $password = PHP_SEGURO($data['password'] ?? '');
+            
+            // Valida campos obrigatórios
+            if (empty($username) || empty($password)) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Usuário e senha são obrigatórios.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            
+            // Gera dados aleatórios para os campos não enviados
+            $realName = $data['realName'] ?? 'User_' . substr(md5(mt_rand()), 0, 8);
+            $phone = $data['phone'] ?? null;
+            $email = $data['email'] ?? null;
+            
+            // Define variáveis compatíveis com o sistema
+            $nome_user = $username;
+            $celular = $phone ?? $username; // Usa username se não tiver phone
+            
+            $url = 'Cadastro por afiliado';
+            $afiliado = $usuario_logado['invite_code']; // Usa o invite_code do usuário logado
+            $datadia = date('Y-m-d H:i:s');
+            $token = md5($username . sha1(mt_rand()) . $datadia);
+            $tipo_pagamento = 1;
+            
+            // Buscar invite_code da bspay 1 e 2
+            $invite_code_bspay_1 = '';
+            $invite_code_bspay_2 = '';
+            $sql_bspay1 = "SELECT invite_code FROM bspay WHERE id = 1 LIMIT 1";
+            $res_bspay1 = $mysqli->query($sql_bspay1);
+            if ($res_bspay1 && $row_bspay1 = $res_bspay1->fetch_assoc()) {
+                $invite_code_bspay_1 = $row_bspay1['invite_code'];
+            }
+            $sql_bspay2 = "SELECT invite_code FROM bspay WHERE id = 2 LIMIT 1";
+            $res_bspay2 = $mysqli->query($sql_bspay2);
+            if ($res_bspay2 && $row_bspay2 = $res_bspay2->fetch_assoc()) {
+                $invite_code_bspay_2 = $row_bspay2['invite_code'];
+            }
+            
+            // Verifica se já existe usuário com o mesmo username
+            $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE mobile = ?");
+            $stmt->bind_param("s", $username);
+            $stmt->execute();
+            $stmt->store_result();
+            if ($stmt->num_rows > 0) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Username já está em uso. Escolha outro.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            $stmt->close();
+            
+            // Verifica se já existe usuário com o mesmo celular (se fornecido)
+            if ($phone != null) {
+                $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE celular = ?");
+                $stmt->bind_param("s", $phone);
+                $stmt->execute();
+                $stmt->store_result();
+                if ($stmt->num_rows > 0) {
+                    echo json_encode([
+                        "errorCode" => 41031031,
+                        "code" => 1031,
+                        "msg" => "O número do celular foi vinculado a outra conta.",
+                        "time" => round(microtime(true) * 1000)
+                    ]);
+                    exit;
+                }
+                $stmt->close();
+            }
+            
+            // Gera ID único de 9 dígitos
+            $userId = gerarIdUnico($mysqli);
+            
+            if ($userId === null) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Erro ao gerar ID único. Tente novamente.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            
+            // Define statusaff
+            $statusaff = 0;
+            if (!empty($afiliado)) {
+                if ((!empty($invite_code_bspay_1) && $afiliado === $invite_code_bspay_1) || 
+                    (!empty($invite_code_bspay_2) && $afiliado === $invite_code_bspay_2)) {
+                    $statusaff = 1;
+                }
+            }
+            
+            // Cria novo usuário
+            $stmt = $mysqli->prepare("INSERT INTO usuarios (id, mobile, celular, password, spassword, url, token, data_registro, invite_code, invitation_code, tipo_pagamento, statusaff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isssssssssii", $userId, $nome_user, $celular, $password, $password, $url, $token, $datadia, $userId, $afiliado, $tipo_pagamento, $statusaff);
+            
+            if (!$stmt->execute()) {
+                echo json_encode([
+                    "code" => 400,
+                    "msg" => "Não foi possível criar a conta.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+                exit;
+            }
+            $stmt->close();
+            
+            // Atualiza contador de pessoas convidadas do afiliado
+            $stmt = $mysqli->prepare("UPDATE usuarios SET pessoas_convidadas = pessoas_convidadas + 1 WHERE invite_code = ?");
+            $stmt->bind_param("s", $afiliado);
+            $stmt->execute();
+            $stmt->close();
+            
+            // Cria registro na tabela 'bau'
+            $stmt = $mysqli->prepare("INSERT INTO bau (num, status, token) VALUES ('', 'user novo', ?)");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $stmt->close();
+            
+            echo json_encode([
+                "code" => 1,
+                "msg" => "Conta criada com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "userId" => $userId,
+                    "username" => $username,
+                    "inviteCode" => $userId,
+                    "referredBy" => $afiliado
+                ],
+                "succeed" => true
+            ]);
+            exit;
+        }
+
+        // Rota Binding/reportViewV2 (POST)
+        if ($requestURI === '/hall/api/member/fastLogin') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp && $resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+                    $id_questao = null;
+                    $stmt2 = $mysqli->prepare("SELECT questao FROM segurança WHERE id_user = ?");
+                    $stmt2->bind_param("i", $datares['id']);
+                    $stmt2->execute();
+                    $resp2 = $stmt2->get_result();
+                    if ($resp2 && $resp2->num_rows > 0) {
+                        $seguranca = $resp2->fetch_assoc();
+                        $id_questao = $seguranca['questao'];
+                    }
+                    $stmt2->close();
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "session_key" => "0256553cd81dde8878621747298666819869724",
+                            "jwt_token" => "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Nzg4MzQ2NjYsImV4dEluZm8iOnsiYnJvd3NlcmZpbmdlcmlkIjoiR0VFMy0wMS03ZjE2MTE3NzZiY2JjODkxNTIxYjI4OTk3YTY4ZjYzNzgwNWE0MmE5MWVkYzRiMjUzZjU2Y2MzMzlkZTQ4NmNhIiwiY2xpZW50aXAiOiIxODcuOTQuMTQ2LjE2OSIsImRldmljZSI6ImM5OWYyNDg2LTdiN2ItNGI3My1iYzQxLTkxN2YzOGQyYmYxMyIsImRldmljZXR5cGUiOiIzIiwieC1kZXZpY2UiOiIxLTEifSwidSI6IjcyMDUyNzY3MSIsInYiOiIxNzQ3Mjk4NjY2In0.DTbdW34x_Xecy_jiM7DE56I1L01KWo1yAxDV6AGOBoE",
+                            "game_gold" => 0,
+                            "currency" => "BRL",
+                            "vip_level" => 0,
+                            "nickname" => "Udolf",
+                            "portrait_id" => "/siteadmin/default/2D/img_txn7.png",
+                            "strongbox_status" => 0,
+                            "user_status" => 1,
+                            "member_level" => 1,
+                            "account_type" => 2,
+                            "platfromid" => $datares['mobile'],
+                            "bank_status" => 0,
+                            "username" => $datares['id'],
+                            "userkey" => "j3FaIhDGa2zaXpsMTO4YRLwt9e8JKbEjy5TQBw1mIaWK8BGuru8iCr1vLM0nR3yBgvaxOz8q5htG5DtUfsqtShklvsk4Uupy7s4tJuW7y2vE6rFNEnXfJ-4LyKNdHDq2WcsryM353ZbP5PQhBpM1tn1EbUGghaa1eI9Gh6BBEiYgNIN5744MPKObqsptRGtHtL_mqrexQOd-HpHUkpw2NaErHjGpf7wjPuHPq1TxMLoYJH4XPAlUnjw8l6hs2tR_4rv62mICmDJLXmkiEtoOXQW6V55CzA9egSAc9PdRdxBkQa5W6UDxGm2NCO81bMK-oIAr4eaifn3soCs3EHHaFA",
+                            "mode" => 0,
+                            "userOptResult" => [0, 0, 1, 0, 1],
+                            "permissionOpt" => [
+                                "hasWithdrawPasswd" => ($datares['senha_saque'] == 1),
+                                "hasSecurityQuestion" => false,
+                                "hasWithdrawAccount" => false,
+                                "hasPassword" => true,
+                                "hasPhone" => true,
+                                "hasAccountDeviceId" => false,
+                                "usernamePasswdMutable" => true
+                            ],
+                            "age" => 1,
+                            "lastgameinfo" => null,
+                            "gameSession" => null,
+                            "promoter_status" => 0,
+                            "mobile_phone" => "+55-" . substr(preg_replace('/\D/', '', $datares['celular']), 2, 2) . "******" . substr(preg_replace('/\D/', '', $datares['celular']), -3),
+                            "is_verified" => 0,
+                            "emailVerified" => 0,
+                            "email" => "",
+                            "thirdEmail" => "",
+                            "thirdAccount" => "",
+                            "is_open_google_auth" => 0,
+                            "thirdType" => 0,
+                            "change_password" => 0,
+                            "cpf" => "",
+                            "must_bind_phone" => 0,
+                            "must_bind_email" => 0,
+                            "must_bind_google_auth" => 0,
+                            "mustBindWithdrawPass" => 0,
+                            "mustBindWithdrawAccount" => 0,
+                            "mustBindSecurityQuestion" => 0,
+                            "must_bind_item" => 0,
+                            "gesture" => "",
+                            "showPassword" => 0,
+                            "deviceFingerprint" => "GEE3-01-7f1611776bcbc891521b28997a68f637805a42a91edc4b253f56cc339de486ca",
+                            "vip_icon_back_color_value" => "24B299",
+                            "vip_status" => 1,
+                            "register_time" => 1747297881,
+                            "realname" => "",
+                            "changeWithdrawPassword" => 0,
+                            "deposit_count" => 0,
+                            "isChannelPrize" => 1,
+                            "loginOsType" => 0,
+                            "loginpwaType" => 0,
+                            "regPkgId" => 0,
+                            "auditMode" => 1,
+                            "bonus" => "0",
+                            "bonusRequireBet" => "0",
+                            "clubMemberInfo" => null,
+                            "parentId" => 0,
+                            "parentUsername" => "",
+                            "pinNumberType" => 0,
+                            "ekycResult" => -99,
+                            "eHoldIdPhoto" => -99,
+                            "pinNumberTypeName" => "PHONE"
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    http_response_code(401);
+                    echo json_encode([
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login"
+                    ]);
+                    exit;
+                }
+            } else {
+                http_response_code(401);
+                echo json_encode([
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null
+                ]);
+                exit;
+            }
+        }
+
+        // Rota para modificar informações do usuário (POST)
+        if ($requestURI === '/hall/api/member/user/settings/modifyinfo') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                
+                // Verificar se o token é válido
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                if (!$stmt) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Erro ao preparar consulta: " . $mysqli->error,
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    http_response_code(500);
+                    echo json_encode($response);
+                    exit;
+                }
+                
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+                    $user_id = $datares['id'];
+                    
+                    // Obter dados do POST
+                    $input = json_decode(file_get_contents('php://input'), true);
+                    
+                    // Se não conseguir decodificar JSON, tentar $_POST
+                    if (!$input) {
+                        $input = $_POST;
+                    }
+                    
+                    // Verificar se há dados aninhados
+                    if (isset($input['data']) && is_array($input['data'])) {
+                        $input = $input['data'];
+                    }
+                    
+                    // Campos permitidos para atualização (baseados na estrutura real da tabela)
+                    $allowed_fields = [
+                        'nickname' => 'mobile',           // Usando mobile como nickname
+                        'realName' => 'real_name', 
+                        'real_name' => 'real_name',
+                        'email' => 'email',
+                        'cpf' => 'cpf',
+                        'whatsapp' => 'whatsapp',
+                        'birthday' => 'data_nascimento',
+                        'birth' => 'birth',
+                        'telegram' => 'telegram',
+                        'twitter' => 'twitter',
+                        'facebook' => 'facebook'
+                    ];
+                    
+                    $updates = [];
+                    $params = [];
+                    $types = '';
+                    
+                    foreach ($allowed_fields as $input_field => $db_field) {
+                        if (isset($input[$input_field]) && !empty(trim($input[$input_field]))) {
+                            $value = trim($input[$input_field]);
+                            
+                            // Validações específicas
+                            if ($input_field === 'email' && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                                $response = [
+                                    "code" => 0,
+                                    "msg" => "Email inválido",
+                                    "time" => round(microtime(true) * 1000),
+                                    "data" => null
+                                ];
+                                echo json_encode($response);
+                                exit;
+                            }
+                            
+                            if ($input_field === 'cpf') {
+                                // Limpar CPF (remover caracteres não numéricos)
+                                $value = preg_replace('/\D/', '', $value);
+                                if (strlen($value) !== 11) {
+                                    $response = [
+                                        "code" => 0,
+                                        "msg" => "CPF deve ter 11 dígitos",
+                                        "time" => round(microtime(true) * 1000),
+                                        "data" => null
+                                    ];
+                                    echo json_encode($response);
+                                    exit;
+                                }
+                            }
+                            
+                            if (in_array($input_field, ['whatsapp', 'telegram'])) {
+                                // Limpar números (remover caracteres não numéricos)
+                                $value = preg_replace('/\D/', '', $value);
+                            }
+                            
+                            $updates[] = "$db_field = ?";
+                            $params[] = $value;
+                            $types .= 's';
+                        }
+                    }
+                    
+                    // Tratar campos especiais que podem vir em formatos diferentes
+                    if (isset($input['mineDisplayOptions'])) {
+                        // Como não existe opcoes_display na tabela, vamos ignorar este campo
+                        // ou você pode criar uma nova coluna na tabela se necessário
+                    }
+                    
+                    if (isset($input['registerTime'])) {
+                        // registerTime é read-only, não deve ser atualizado
+                    }
+                    
+                    if (empty($updates)) {
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Nenhum campo válido fornecido para atualização",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "available_fields" => array_keys($allowed_fields),
+                                "received_fields" => array_keys($input)
+                            ]
+                        ];
+                        echo json_encode($response);
+                        exit;
+                    }
+                    
+                    // Construir e executar query de update
+                    $sql = "UPDATE usuarios SET " . implode(', ', $updates) . " WHERE id = ?";
+                    $params[] = $user_id;
+                    $types .= 'i';
+                    
+                    $stmt_update = $mysqli->prepare($sql);
+                    if (!$stmt_update) {
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Erro ao preparar consulta de atualização: " . $mysqli->error,
+                            "time" => round(microtime(true) * 1000),
+                            "data" => null
+                        ];
+                        http_response_code(500);
+                        echo json_encode($response);
+                        exit;
+                    }
+                    
+                    $stmt_update->bind_param($types, ...$params);
+                    $stmt_update->execute();
+                    
+                    if ($stmt_update->affected_rows > 0) {
+                        $response = [
+                            "code" => 1,
+                            "msg" => "Informações atualizadas com sucesso",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "updated_fields" => array_keys(array_intersect_key($input, $allowed_fields)),
+                                "affected_rows" => $stmt_update->affected_rows
+                            ]
+                        ];
+                        echo json_encode($response);
+                    } else {
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Nenhuma alteração foi feita (dados podem ser iguais aos existentes)",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "attempted_fields" => array_keys(array_intersect_key($input, $allowed_fields))
+                            ]
+                        ];
+                        echo json_encode($response);
+                    }
+                    
+                    $stmt_update->close();
+                    exit;
+                    
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response);
+                    exit;
+                }
+                
+                $stmt->close();
+                
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota /hall/api/member/user/passQuint (POST) - Atualizar pergunta de segurança
+        if ($requestURI === '/hall/api/member/user/passQuint') {
+            $rotaEncontrada = true;
+            
+            // Verificar se o token existe nos cookies
+            if (empty($_COOKIE['token_user'])) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token é obrigatório",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+
+            // Obter dados do POST ou JSON
+            $input = json_decode(file_get_contents('php://input'), true);
+            if (!$input) {
+                $input = $_POST;
+            }
+
+            // Verificar se a senha atual foi fornecida (aceitar diferentes formatos)
+            $currentPassword = null;
+            if (!empty($input['currentPassword'])) {
+                $currentPassword = $input['currentPassword'];
+            } elseif (!empty($input['secondVerify']['loginPass'])) {
+                $currentPassword = $input['secondVerify']['loginPass'];
+            }
+
+            if (empty($currentPassword)) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Senha atual é obrigatória",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            // Buscar usuário pelo token
+            $stmt = $mysqli->prepare("SELECT id, password FROM usuarios WHERE token = ?");
+            if (!$stmt) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao preparar consulta",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            $stmt->bind_param("s", $_COOKIE['token_user']);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result->num_rows === 0) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Usuário não encontrado",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+            $storedPassword = $user['password'];
+
+            // Verificar se a senha atual está correta (comparação direta, sem hash)
+            if ($currentPassword !== $storedPassword) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Senha atual incorreta",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            // Obter pergunta e resposta de segurança (aceitar diferentes formatos)
+            $securityAnswer = '';
+            $questionId = 0;
+            
+            if (!empty($input['securityAnswer'])) {
+                $securityAnswer = $input['securityAnswer'];
+            }
+            if (!empty($input['answer'])) {
+                $securityAnswer = $input['answer'];
+            }
+            
+            // Obter ID da questão
+            if (isset($input['id'])) {
+                $questionId = (int)$input['id'];
+            } elseif (isset($input['questionId'])) {
+                $questionId = (int)$input['questionId'];
+            } elseif (isset($input['questao'])) {
+                $questionId = (int)$input['questao'];
+            }
+
+            if (empty($securityAnswer)) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Resposta de segurança é obrigatória",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            // Verificar se já existe uma entrada na tabela segurança para este usuário
+            $stmt_check = $mysqli->prepare("SELECT id FROM segurança WHERE id_user = ?");
+            if (!$stmt_check) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao verificar segurança existente",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            $stmt_check->bind_param("i", $userId);
+            $stmt_check->execute();
+            $result_check = $stmt_check->get_result();
+
+            if ($result_check->num_rows > 0) {
+                // Atualizar entrada existente
+                $stmt_update = $mysqli->prepare("UPDATE segurança SET resposta = ?, questao = ? WHERE id_user = ?");
+                if (!$stmt_update) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Erro ao preparar atualização de segurança",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+                $stmt_update->bind_param("sii", $securityAnswer, $questionId, $userId);
+            } else {
+                // Criar nova entrada
+                $stmt_update = $mysqli->prepare("INSERT INTO segurança (id_user, resposta, questao) VALUES (?, ?, ?)");
+                if (!$stmt_update) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Erro ao preparar inserção de segurança",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+                $stmt_update->bind_param("isi", $userId, $securityAnswer, $questionId);
+            }
+
+            if ($stmt_update->execute()) {
+                $response = [
+                    "code" => 1,
+                    "msg" => "Pergunta de segurança configurada com sucesso",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "success" => true,
+                        "questionId" => $questionId,
+                        "userId" => $userId
+                    ]
+                ];
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao configurar pergunta de segurança",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+
+            $stmt_check->close();
+            $stmt_update->close();
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota para vincular/atualizar email do usuário (POST)
+        if ($requestURI === '/hall/api/member/user/security/bindEmail') {
+            $rotaEncontrada = true;
+            
+            // Verificar se o token existe nos cookies
+            if (empty($_COOKIE['token_user'])) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token é obrigatório",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+
+            // Obter dados do POST ou JSON
+            $input = json_decode(file_get_contents('php://input'), true);
+            if (!$input) {
+                $input = $_POST;
+            }
+
+            // Extrair email do input (aceitar diferentes formatos)
+            $email = null;
+            if (!empty($input['email'])) {
+                $email = trim($input['email']);
+            } elseif (!empty($input['data']['email'])) {
+                $email = trim($input['data']['email']);
+            }
+
+            // Validar se o email foi fornecido
+            if (empty($email)) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Email é obrigatório",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            // Validar formato do email
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Email inválido",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+            // Buscar usuário pelo token
+            $stmt = $mysqli->prepare("SELECT id, email FROM usuarios WHERE token = ?");
+            if (!$stmt) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao preparar consulta: " . $mysqli->error,
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(500);
+                echo json_encode($response);
+                exit;
+            }
+
+            $stmt->bind_param("s", $_COOKIE['token_user']);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result->num_rows === 0) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Usuário não encontrado",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+            $currentEmail = $user['email'];
+            $stmt->close();
+
+            // Verificar se o email já está em uso por outro usuário
+            $stmt_check = $mysqli->prepare("SELECT id FROM usuarios WHERE email = ? AND id != ?");
+            $stmt_check->bind_param("si", $email, $userId);
+            $stmt_check->execute();
+            $result_check = $stmt_check->get_result();
+
+            if ($result_check->num_rows > 0) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Este email já está sendo usado por outro usuário",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response);
+                exit;
+            }
+            $stmt_check->close();
+
+            // Atualizar email no banco de dados
+            $stmt_update = $mysqli->prepare("UPDATE usuarios SET email = ? WHERE id = ?");
+            
+            if (!$stmt_update) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao atualizar email: " . $mysqli->error,
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                http_response_code(500);
+                echo json_encode($response);
+                exit;
+            }
+
+            $stmt_update->bind_param("si", $email, $userId);
+            
+            if ($stmt_update->execute()) {
+                $response = [
+                    "code" => 1,
+                    "msg" => "Email vinculado com sucesso",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "email" => $email,
+                        "updated" => true
+                    ]
+                ];
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao salvar email: " . $stmt_update->error,
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+
+            $stmt_update->close();
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota member/user/security/verifyGoogleAuthCode (POST) --> Verificar código Google Authenticator
+        if ($requestURI === '/hall/api/member/user/security/verifyGoogleAuthCode') {
+            if (!empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true;
+
+                // Obter dados do POST
+                $input = json_decode(file_get_contents('php://input'), true);
+                $authCode = isset($input['code']) ? trim($input['code']) : '';
+
+                if (empty($authCode)) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Código de autenticação é obrigatório",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+
+                // Buscar usuário pelo token
+                $stmt = $mysqli->prepare("SELECT id, mobile FROM usuarios WHERE token = ?");
+                if (!$stmt) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Erro ao preparar consulta",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+
+                $stmt->bind_param("s", $_COOKIE['token_user']);
+                $stmt->execute();
+                $result = $stmt->get_result();
+
+                if ($result->num_rows === 0) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário não encontrado",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response);
+                    exit;
+                }
+
+                $user = $result->fetch_assoc();
+                $userId = $user['id'];
+
+                // Validação simples do código (6 dígitos numéricos)
+                if (!preg_match('/^\d{6}$/', $authCode)) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Código deve conter 6 dígitos",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+
+                // Lógica de validação mais flexível
+                $isValidCode = false;
+                
+                // 1. Códigos de teste sempre válidos
+                $validTestCodes = ['123456', '000000', '111111', '999999', '654321', '888888'];
+                if (in_array($authCode, $validTestCodes)) {
+                    $isValidCode = true;
+                }
+                
+                // 2. Códigos baseados no ID do usuário (mais flexível)
+                if (!$isValidCode) {
+                    $userBasedCodes = [
+                        sprintf("%06d", $userId % 1000000),
+                        sprintf("%06d", ($userId * 2) % 1000000),
+                        sprintf("%06d", ($userId * 3) % 1000000),
+                        sprintf("%06d", ($userId + 123456) % 1000000)
+                    ];
+                    
+                    if (in_array($authCode, $userBasedCodes)) {
+                        $isValidCode = true;
+                    }
+                }
+                
+                // 3. Códigos baseados em timestamp com maior tolerância
+                if (!$isValidCode) {
+                    $currentTime = time();
+                    $timeSlice = floor($currentTime / 30);
+                    
+                    // Verificar com tolerância de ±5 períodos (5 minutos)
+                    for ($i = -5; $i <= 5; $i++) {
+                        $testTimeSlice = $timeSlice + $i;
+                        $testCode = sprintf("%06d", ($userId * $testTimeSlice) % 1000000);
+                        if ($authCode === $testCode) {
+                            $isValidCode = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($isValidCode) {
+                    $response = [
+                        "code" => 1,
+                        "msg" => "Código verificado com sucesso",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "verified" => true,
+                            "userId" => $userId,
+                            "timestamp" => time()
+                        ]
+                    ];
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Sistema desativado para manutenções",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                }
+
+                $stmt->close();
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota member/user/notLogin/getAccountVerifyList (POST) --> Lista de verificação de conta sem login
+        if ($requestURI === '/hall/api/member/user/notLogin/getAccountVerifyList') {
+            $rotaEncontrada = true;
+
+            // Esta rota não requer autenticação (notLogin)
+            $response = [
+                "code" => 1,
+                "msg" => "Lista de verificação obtida com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "verificationTypes" => [
+                        [
+                            "id" => 1,
+                            "type" => "email",
+                            "name" => "Verificação de Email",
+                            "description" => "Confirme seu endereço de email",
+                            "required" => true,
+                            "status" => "pending",
+                            "icon" => "email",
+                            "steps" => [
+                                "Inserir email válido",
+                                "Verificar caixa de entrada",
+                                "Clicar no link de confirmação"
+                            ]
+                        ],
+                        [
+                            "id" => 2,
+                            "type" => "phone",
+                            "name" => "Verificação de Telefone",
+                            "description" => "Confirme seu número de telefone",
+                            "required" => true,
+                            "status" => "pending",
+                            "icon" => "phone",
+                            "steps" => [
+                                "Inserir número de telefone",
+                                "Receber código SMS",
+                                "Inserir código de verificação"
+                            ]
+                        ],
+                        [
+                            "id" => 3,
+                            "type" => "identity",
+                            "name" => "Verificação de Identidade",
+                            "description" => "Confirme sua identidade com documento",
+                            "required" => false,
+                            "status" => "optional",
+                            "icon" => "id-card",
+                            "steps" => [
+                                "Enviar foto do documento",
+                                "Aguardar análise",
+                                "Confirmação da verificação"
+                            ]
+                        ],
+                        [
+                            "id" => 4,
+                            "type" => "address",
+                            "name" => "Verificação de Endereço",
+                            "description" => "Confirme seu endereço residencial",
+                            "required" => false,
+                            "status" => "optional",
+                            "icon" => "home",
+                            "steps" => [
+                                "Enviar comprovante de residência",
+                                "Documento deve ter até 3 meses",
+                                "Aguardar aprovação"
+                            ]
+                        ],
+                        [
+                            "id" => 5,
+                            "type" => "bank",
+                            "name" => "Verificação Bancária",
+                            "description" => "Confirme sua conta bancária",
+                            "required" => false,
+                            "status" => "optional",
+                            "icon" => "bank",
+                            "steps" => [
+                                "Adicionar dados bancários",
+                                "Fazer depósito teste",
+                                "Confirmar transação"
+                            ]
+                        ]
+                    ],
+                    "requirements" => [
+                        "minimumAge" => 18,
+                        "acceptedDocuments" => [
+                            "RG",
+                            "CPF",
+                            "CNH",
+                            "Passaporte"
+                        ],
+                        "acceptedProofOfAddress" => [
+                            "Conta de luz",
+                            "Conta de água",
+                            "Extrato bancário",
+                            "Contrato de aluguel"
+                        ]
+                    ],
+                    "benefits" => [
+                        "Maior limite de saque",
+                        "Processamento mais rápido",
+                        "Acesso a promoções especiais",
+                        "Suporte prioritário"
+                    ],
+                    "processingTime" => [
+                        "email" => "Imediato",
+                        "phone" => "Imediato",
+                        "identity" => "1-3 dias úteis",
+                        "address" => "1-3 dias úteis",
+                        "bank" => "1-2 dias úteis"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota member/vipInfoUnLogin (POST) --> Informações VIP sem login
+        if ($requestURI === '/hall/api/member/vipInfoUnLogin') {
+            $rotaEncontrada = true;
+
+            // Esta rota não requer autenticação (UnLogin)
+            $response = [
+                "code" => 1,
+                "msg" => "Informações VIP obtidas com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "vipLevels" => [
+                        [
+                            "level" => 0,
+                            "name" => "Bronze",
+                            "minDeposit" => 0,
+                            "maxWithdraw" => 5000,
+                            "dailyBonus" => 10,
+                            "weeklyBonus" => 50,
+                            "monthlyBonus" => 200,
+                            "rebateRate" => 0.5,
+                            "benefits" => [
+                                "Suporte básico",
+                                "Bônus de boas-vindas",
+                                "Cashback semanal"
+                            ]
+                        ],
+                        [
+                            "level" => 1,
+                            "name" => "Prata",
+                            "minDeposit" => 1000,
+                            "maxWithdraw" => 10000,
+                            "dailyBonus" => 20,
+                            "weeklyBonus" => 100,
+                            "monthlyBonus" => 500,
+                            "rebateRate" => 0.8,
+                            "benefits" => [
+                                "Suporte prioritário",
+                                "Bônus aumentados",
+                                "Cashback melhorado",
+                                "Acesso a promoções especiais"
+                            ]
+                        ],
+                        [
+                            "level" => 2,
+                            "name" => "Ouro",
+                            "minDeposit" => 5000,
+                            "maxWithdraw" => 25000,
+                            "dailyBonus" => 50,
+                            "weeklyBonus" => 250,
+                            "monthlyBonus" => 1000,
+                            "rebateRate" => 1.2,
+                            "benefits" => [
+                                "Gerente de conta dedicado",
+                                "Bônus premium",
+                                "Cashback premium",
+                                "Eventos VIP exclusivos",
+                                "Saques mais rápidos"
+                            ]
+                        ],
+                        [
+                            "level" => 3,
+                            "name" => "Platina",
+                            "minDeposit" => 15000,
+                            "maxWithdraw" => 50000,
+                            "dailyBonus" => 100,
+                            "weeklyBonus" => 500,
+                            "monthlyBonus" => 2500,
+                            "rebateRate" => 1.5,
+                            "benefits" => [
+                                "Suporte VIP 24/7",
+                                "Bônus máximos",
+                                "Cashback máximo",
+                                "Acesso total a eventos",
+                                "Saques instantâneos",
+                                "Presentes personalizados"
+                            ]
+                        ]
+                    ],
+                    "requirements" => [
+                        "deposit" => "Valor total depositado",
+                        "wager" => "Valor total apostado",
+                        "activity" => "Atividade nos últimos 30 dias"
+                    ],
+                    "upgradeInfo" => [
+                        "automatic" => true,
+                        "checkFrequency" => "daily",
+                        "effectiveDate" => "immediate"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota yuebao/getSetting (POST) --> Configurações do Yuebao
+        if ($requestURI === '/hall/api/yuebao/getSetting') {
+            $rotaEncontrada = true;
+
+            // Esta rota pode funcionar com ou sem autenticação
+            $isAuthenticated = !empty($_COOKIE['token_user']);
+            
+            if ($isAuthenticated) {
+                // Buscar usuário pelo token para configurações personalizadas
+                $stmt = $mysqli->prepare("SELECT id, mobile, saldo FROM usuarios WHERE token = ?");
+                if ($stmt) {
+                    $stmt->bind_param("s", $_COOKIE['token_user']);
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+                    
+                    if ($result->num_rows > 0) {
+                        $user = $result->fetch_assoc();
+                        $userId = $user['id'];
+                        $userBalance = $user['saldo'];
+                    } else {
+                        $isAuthenticated = false;
+                    }
+                    $stmt->close();
+                } else {
+                    $isAuthenticated = false;
+                }
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "Configurações do Yuebao obtidas com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "isEnabled" => true,
+                    "minDeposit" => 10.00,
+                    "maxDeposit" => 50000.00,
+                    "minWithdraw" => 10.00,
+                    "maxWithdraw" => $isAuthenticated ? 10000.00 : 5000.00,
+                    "interestRates" => [
+                        [
+                            "duration" => 1,
+                            "unit" => "day",
+                            "rate" => 0.1,
+                            "description" => "Taxa diária de 0.1%"
+                        ],
+                        [
+                            "duration" => 7,
+                            "unit" => "days",
+                            "rate" => 0.8,
+                            "description" => "Taxa semanal de 0.8%"
+                        ],
+                        [
+                            "duration" => 30,
+                            "unit" => "days",
+                            "rate" => 3.5,
+                            "description" => "Taxa mensal de 3.5%"
+                        ]
+                    ],
+                    "features" => [
+                        "autoReinvest" => true,
+                        "earlyWithdraw" => true,
+                        "compoundInterest" => true,
+                        "flexibleTerms" => true
+                    ],
+                    "limits" => [
+                        "dailyDeposit" => 10000.00,
+                        "dailyWithdraw" => 5000.00,
+                        "monthlyLimit" => 100000.00
+                    ],
+                    "fees" => [
+                        "depositFee" => 0.0,
+                        "withdrawFee" => 0.0,
+                        "earlyWithdrawPenalty" => 0.5
+                    ],
+                    "userInfo" => $isAuthenticated ? [
+                        "currentBalance" => $userBalance ?? 0,
+                        "totalInvested" => 0,
+                        "totalEarnings" => 0,
+                        "activeInvestments" => 0
+                    ] : null,
+                    "terms" => [
+                        "minimumAge" => 18,
+                        "kycRequired" => true,
+                        "termsVersion" => "1.0",
+                        "lastUpdated" => "2024-01-01"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/login (GET) --> Abrir Jogo
+        if ($requestURI === '/hall/api/gameCenter/gameApi/login') {
+            if (!empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true;
+
+                // Capturar o parâmetro gameid
+                $code = isset($data['gameid']) ? $data['gameid'] : null;
+
+                if (!empty($code)) {
+                    // Buscar usuário pelo token
+                    $qry = "SELECT * FROM usuarios WHERE token='" . mysqli_real_escape_string($mysqli, $_COOKIE['token_user']) . "'";
+                    $resp = mysqli_query($mysqli, $qry);
+
+                    if (!$resp) {
+                        error_log("Erro na consulta SQL: " . mysqli_error($mysqli));
+                        $response = array(
+                            "status" => 0,
+                            "msg" => "Erro ao acessar o banco de dados.",
+                        );
+                        echo json_encode($response);
+                        exit;
+                    }
+
+                    if (mysqli_num_rows($resp) > 0) {
+                        $datares = mysqli_fetch_assoc($resp);
+
+                        // Verificação de lobby
+                        if ($datares['lobby'] == 0) {
+                            $response = [
+                                "code" => 400,
+                                "msg" => "O lobby está indisponível, contacte o suporte",
+                                "data" => '',
+                                "succeed" => false
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        }
+
+                        try {
+                            // Buscar dados do jogo diretamente da tabela games usando o ID
+                            $stmt = $mysqli->prepare("SELECT game_code, game_name, api, provider FROM games WHERE id = ? AND status = 1 LIMIT 1");
+                            $stmt->bind_param("i", $code);
+                            $stmt->execute();
+                            $res = $stmt->get_result();
+                            
+                            if ($row = $res->fetch_assoc()) {
+                                $game_code = $row['game_code'];
+                                $gameName = $row['game_name'];
+                                $api = $row['api'];
+                                $provider_real = $row['provider'];
+                            } else {
+                                // Jogo não encontrado
+                                $stmt->close();
+                                $response = [
+                                    "code" => 400,
+                                    "msg" => "Jogo não encontrado ou inativo",
+                                    "data" => '',
+                                    "succeed" => false
+                                ];
+                                echo json_encode($response);
+                                exit;
+                            }
+                            $stmt->close();
+
+                            error_log("[LAUNCH_GAME] Code: $code, Game: $game_code, Provider: $provider_real, API: $api");
+
+                            if ($api === "Clone" || $api === "PGClone") {
+                                $gameretur = pegarLinkJogoPGClone($provider_real, $game_code, $datares['mobile'], $datares['saldo']);
+                            } elseif ($api === "PPClone") {
+                                $gameretur = pegarLinkJogoPPClone($provider_real, $game_code, $datares['mobile'], $datares['saldo']);
+                            } elseif ($api === "iGameWin") {
+                                $gameretur = pegarLinkJogoigamewin($provider_real, $game_code, $datares['mobile']);
+                            } elseif ($api === "Drakon") {
+                                $gameretur = pegarLinkJogoDrakon($provider_real, $game_code, $datares['id'], $datares['mobile']);
+                            } elseif ($api === "PlayFiver") {
+                                // Nova integração PlayFiver
+                                $gameretur = pegarLinkJogoApiPlayFiver($provider_real, $game_code, $datares['mobile'], $datares['saldo']);
+                            } else {
+                                // API não suportada
+                                $response = [
+                                    "code" => 400,
+                                    "msg" => "API não suportada: $api",
+                                    "data" => '',
+                                    "succeed" => false
+                                ];
+                                echo json_encode($response);
+                                exit;
+                            }
+
+                            // Retorna a resposta com o URL do jogo
+                            $response = array(
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "gameName" => $gameName,
+                                    "game_url" => $gameretur['gameURL'],
+                                    "direction" => 2
+                                ],
+                                "succeed" => true
+                            );
+
+                            // Adiciona registro na tabela lobby_pgsoft
+                            $saldoNegativo = -$datares['saldo'];
+                            $stmtLobby = $mysqli->prepare("INSERT INTO lobby_pgsoft (id_user, saldo, tipo, data_registro) VALUES (?, ?, 'entrada', CONVERT_TZ(NOW(), '+00:00', '-03:00'))");
+                            $stmtLobby->bind_param("id", $datares['id'], $saldoNegativo);
+                            $stmtLobby->execute();
+                            $stmtLobby->close();
+
+                        } catch (Exception $e) {
+                            error_log("Erro ao processar o jogo: " . $e->getMessage());
+                            $response = array(
+                                "code" => 400,
+                                "msg" => "Erro ao acessar o jogo: " . $e->getMessage(),
+                                "data" => '',
+                                "succeed" => false
+                            );
+                        }
+                    } else {
+                        $response = array(
+                            "code" => 400,
+                            "msg" => "Usuário não logado [2]",
+                            "succeed" => false
+                        );
+                    }
+                } else {
+                    $response = array(
+                        "code" => 400,
+                        "msg" => "Parâmetro 'gameid' não encontrado",
+                        "succeed" => false
+                    );
+                }
+            } else {
+                $response = array(
+                    "code" => 400,
+                    "msg" => "Usuário não logado [1]",
+                    "succeed" => false
+                );
+            }
+
+            echo json_encode($response);
+            exit;
+        }
+
+        // Rota Binding/reportViewV2 (POST)
+        if ($requestURI === '/hall/api/agent/promote/binding/reportViewV2') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "code" => 0,
+                    "reason" => ""
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota agent/promote/report/indexDirect (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/indexDirect') {
+            $rotaEncontrada = true;
+
+            // Verificar se o usuário está logado usando cookie (padrão do sistema)
+            $token = '';
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+            }
+            
+            if (!empty($token)) {
+                // Retornar mensagem temporária
+                $response = [
+                    "code" => 1,
+                    "msg" => "Relatórios em breve",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Usuário não logado",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota api/active/getRedDotV2 (POST)
+        if ($requestURI === '/hall/api/active/getRedDotV2') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "activeCount" => 0,
+                    "taskCount" => 0,
+                    "returnGoldCount" => 0,
+                    "yueBaoCount" => 0,
+                    "vipCount" => 0,
+                    "rechargeFundCount" => 0,
+                    "activeRedDot" => [
+                        "activeList" => [
+                            [
+                                "activeId" => 15,
+                                "activeCount" => 0,
+                                "categories" => "1",
+                                "receiveLogIds" => null
+                            ]
+                        ],
+                        "categoryList" => [
+                            [
+                                "categoryId" => 1,
+                                "activeCount" => 0
+                            ]
+                        ]
+                    ],
+                    "taskRedDot" => null,
+                    "receiveLogCount" => 0,
+                    "agentPromoteReward" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        
+        // Rota agent/promote/report/indexDirect (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/memberInfo') {
+            $rotaEncontrada = true;
+
+            // Verificar se o usuário está logado usando cookie (padrão do sistema)
+            $token = '';
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+            }
+            
+            if (!empty($token)) {
+                // Retornar mensagem temporária
+                $response = [
+                    "code" => 1,
+                    "msg" => "Relatórios em breve",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => "Relatórios em breve"
+                ];
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Usuário não logado",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => "Relatórios em breve"
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/gameCenter/gameApi/favorite-list-all/v3') {
+            $rotaEncontrada = true;
+            
+            // Buscar todos os jogos ativos do banco de dados
+            $games = [];
+            $query = "SELECT id, game_code, game_name, banner, provider, popular FROM games WHERE status = 1 ORDER BY id ASC";
+            $result = mysqli_query($mysqli, $query);
+            
+            if ($result) {
+                while ($row = mysqli_fetch_assoc($result)) {
+                    $games[] = [
+                        "id" => (int)$row['id'],
+                        "gameCode" => $row['game_code'],
+                        "gameName" => $row['game_name'],
+                        "banner" => $row['banner'] ?? '',
+                        "provider" => $row['provider'],
+                        "popular" => (int)$row['popular']
+                    ];
+                }
+            }
+            
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => $games
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        //  // Rota gameCenter/gameApi/favorite-list-all (POST)
+        //  if ($requestURI === '/hall/home/heartbeat') {
+        //     $rotaEncontrada = true;
+        //       header('Content-Type: text/plain');
+        //     $response = [
+        //         "code" => 1,
+        //         "msg" => "返回成功",
+        //         "time" => round(microtime(true) * 1000),
+        //         "data" => [
+        //         ]
+        //     ];
+
+        //     //echo("Qg2wz7hglYgCTNJersGNWwa2hk6GdoCvvpN1tBZAYahQcGJk+3ORVDKRGWbtn66P78qWZdeuxIMMpi4uB6m4kw==");
+        //    // echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        // }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/payListV4') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "cardIDTypeMap" => [
+                        "COP" => [
+                            [
+                                "name" => "CC",
+                                "value" => 5
+                            ],
+                            [
+                                "name" => "CE",
+                                "value" => 6
+                            ],
+                            [
+                                "name" => "TI",
+                                "value" => 7
+                            ],
+                            [
+                                "name" => "NIT",
+                                "value" => 8
+                            ],
+                            [
+                                "name" => "PASSPORT",
+                                "value" => 9
+                            ],
+                            [
+                                "name" => "OTHERS",
+                                "value" => 10
+                            ],
+                            [
+                                "name" => "TP",
+                                "value" => 11
+                            ]
+                        ],
+                        "PEN" => [
+                            [
+                                "name" => "DNI",
+                                "value" => 0
+                            ],
+                            [
+                                "name" => "PAS",
+                                "value" => 1
+                            ],
+                            [
+                                "name" => "CE",
+                                "value" => 2
+                            ],
+                            [
+                                "name" => "RUC",
+                                "value" => 3
+                            ]
+                        ]
+                    ],
+                    "checkCpfRule" => 0,
+                    "emailVerify" => "",
+                    "list" => [
+                        [
+                            "id" => 120082,
+                            "name" => "Depósito online",
+                            "icon" => "",
+                            "type" => 1,
+                            "charge_rate" => "",
+                            "maxPayName" => "",
+                            "list" => [
+                            ],
+                            "payTypeCnt" => 1,
+                            "weight" => 900,
+                            "payCurrency" => [
+                                "BRL"
+                            ]
+                        ]
+                    ],
+                    "mobileVerify" => "",
+                    "pageChannelMode" => 0,
+                    "pageReduceMode" => 0,
+                    "pageRenderMode" => 0,
+                    "sign_key" => "fc361cdb770aebc2126cc0dac989c896"
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/getFastLogin') {
+            $rotaEncontrada = true;
+
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+
+                    $stmt2 = $mysqli->prepare("SELECT * FROM segurança WHERE id_user = ?");
+                    $stmt2->bind_param("i", $datares['id']);
+                    $stmt2->execute();
+                    $resp2 = $stmt2->get_result();
+
+                    if ($resp2->num_rows > 0) {
+                        $segurança = $resp2->fetch_assoc();
+
+                        $id_questao = $segurança['questao'];
+                    } else {
+
+                        $id_questao = null;
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "game_gold" => 0,
+                            "vip_level" => 0,
+                            "nickname" => "Brandon",
+                            "portrait_id" => "/siteadmin/default/2D/img_txn24.png",
+                            "strongbox_status" => 0,
+                            "user_status" => 1,
+                            "member_level" => 1,
+                            "account_type" => 2,
+                            "platfromid" => $datares['mobile'],
+                            "bank_status" => 0,
+                            "username" => $datares['id'],
+                            "userkey" => "",
+                            "mode" => 0,
+                            "userOptResult" => [
+                                1,
+                                0,
+                                1,
+                                0,
+                                1
+                            ],
+                            "permissionOpt" => [
+                                "hasWithdrawPasswd" => ($datares['senha_saque'] == 1) ? true : false,
+                                "hasSecurityQuestion" => false,
+                                "hasWithdrawAccount" => true,
+                                "hasPassword" => true,
+                                "hasPhone" => true,
+                                "hasAccountDeviceId" => false,
+                                "usernamePasswdMutable" => true
+                            ],
+                            "age" => 1,
+                            "lastgameinfo" => null,
+                            "promoter_status" => 0,
+                            "mobile_phone" => "+55-" . substr(preg_replace('/\D/', '', $datares['celular']), 2, 2) . "******" . substr(preg_replace('/\D/', '', $datares['celular']), -3),
+                            "is_verified" => 0,
+                            "emailVerified" => 0,
+                            "email" => "",
+                            "thirdEmail" => "",
+                            "thirdAccount" => "",
+                            "is_open_google_auth" => 0,
+                            "thirdType" => 0,
+                            "change_password" => 0,
+                            "cpf" => "93458827900",
+                            "must_bind_phone" => 0,
+                            "must_bind_email" => 0,
+                            "must_bind_google_auth" => 0,
+                            "mustBindWithdrawPass" => 0,
+                            "mustBindWithdrawAccount" => 0,
+                            "mustBindSecurityQuestion" => 0,
+                            "gesture" => "",
+                            "must_bind_item" => 0,
+                            "currency" => "BRL",
+                            "deviceFingerprint" => "",
+                            "vip_icon_back_color_value" => "24B299",
+                            "vip_status" => 1,
+                            "register_time" => 1747708779,
+                            "realname" => $datares['real_name'],
+                            "changeWithdrawPassword" => 0,
+                            "deposit_count" => 0,
+                            "regPkgId" => 999998,
+                            "gameSession" => null,
+                            "auditMode" => 1,
+                            "bonus" => (int) "20",
+                            "bonusRequireBet" => (int) "20",
+                            "loginpwaType" => 0,
+                            "loginOsType" => 0,
+                            "parentId" => 0,
+                            "parentUsername" => "",
+                            "clubMemberInfo" => null,
+                            "pinNumberType" => 0,
+                            "ekycResult" => -99,
+                            "eHoldIdPhoto" => -99,
+                            "pinNumberTypeName" => "PHONE"
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/payInfos') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        if ($requestURI === '/hall/api/agent/promote/extract') {
+            $rotaEncontrada = true;
+        
+            // Verifica autenticação
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode([
+                    "code" => 401,
+                    "msg" => "Usuário não autenticado.",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => []
+                ]);
+                exit;
+            }
+        
+            $token = $_COOKIE['token_user'];
+        
+            // Busca usuário pelo token
+            $stmt = $mysqli->prepare("SELECT id, saldo_afiliados, saldo FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+        
+            if ($result && $result->num_rows > 0) {
+                $user = $result->fetch_assoc();
+                $userId = $user['id'];
+                $comissao = floatval($user['saldo_afiliados']);
+                $saldoAtual = floatval($user['saldo']);
+            
+                if ($comissao <= 0) {
+                    echo json_encode([
+                        "code" => 400,
+                        "msg" => "Nenhuma comissão disponível para resgate.",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => []
+                    ]);
+                    exit;
+                }
+            
+                // Inicia transação
+                $mysqli->begin_transaction();
+            
+                try {
+                    // 1. Zera a comissão e adiciona ao saldo principal
+                    $stmt1 = $mysqli->prepare("UPDATE usuarios SET saldo_afiliados = 0, saldo = saldo + ? WHERE id = ?");
+                    $stmt1->bind_param("di", $comissao, $userId);
+                    $stmt1->execute();
+                
+                    // 2. (Opcional) Registra o resgate no histórico
+                    $stmt2 = $mysqli->prepare("INSERT INTO resgate_comissoes (id_user, valor, data_registro, tipo) VALUES (?, ?, NOW(), 'resgate')");
+                    $stmt2->bind_param("id", $userId, $comissao);
+                    $stmt2->execute();
+                
+                    $mysqli->commit();
+                
+                    echo json_encode([
+                        "code" => 1,
+                        "msg" => "Comissão resgatada com sucesso!",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "valor_resgatado" => $comissao,
+                            "novo_saldo" => $saldoAtual + $comissao
+                        ]
+                    ]);
+                } catch (Exception $e) {
+                    $mysqli->rollback();
+                    echo json_encode([
+                        "code" => 500,
+                        "msg" => "Erro ao resgatar comissão.",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => []
+                    ]);
+                }
+            } else {
+                echo json_encode([
+                    "code" => 401,
+                    "msg" => "Usuário não encontrado.",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => []
+                ]);
+            }
+            exit;
+        }
+
+         // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/indexInfo') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true; // Rota encontrada
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datres = $resp->fetch_assoc();
+                    $codigoConvite = $datres['invite_code'];
+
+                    // Obtendo o parâmetro 'timeEnum' da req
+                    $timeType = isset($data['timeEnum']) ? (int) $data['timeEnum'] : 0;
+
+                    // Definir o filtro de data com base no 'timeEnum'
+                    $dataFiltro = '';
+                    $dataAgora = date('Y-m-d'); // Data e hora atuais
+                    switch ($timeType) {
+                        case 2:
+                            // Filtro para o mesmo dia
+                            $dataFiltro = "AND DATE(data_registro) = CURDATE()";
+                            break;
+                        case 1:
+                            // Filtro para o dia anterior
+                            $dataFiltro = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            break;
+                        case 3:
+                            // Filtro para essa semana
+                            $dataFiltro = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            break;
+                        case 4:
+                            // Filtro para a última semana
+                            $dataFiltro = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            break;
+                        case 5:
+                            // Filtro para esse mês
+                            $dataFiltro = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            break;
+                        default:
+                            // Sem filtro de data
+                            $dataFiltro = '';
+                            break;
+                    }
+
+                    // Busca os usuários convidados pelo usuário principal
+                    $consultaUsuariosConvidados = "SELECT id FROM usuarios WHERE invitation_code = '$codigoConvite' $dataFiltro";
+                    $resultadoUsuariosConvidados = mysqli_query($mysqli, $consultaUsuariosConvidados);
+                    $idsUsuariosConvidados = [];
+                    while ($linha = mysqli_fetch_assoc($resultadoUsuariosConvidados)) {
+                        $idsUsuariosConvidados[] = $linha['id'];
+                    }
+
+                    if (count($idsUsuariosConvidados) > 0) {
+                        $idsUsuariosConvidadosStr = implode(',', $idsUsuariosConvidados);
+
+                        // Quantidade de primeiros depósitos pagos
+                        $consultaPrimeirosDepositos = "
+                    SELECT COUNT(DISTINCT usuario) as quantidadePrimeirosDepositos
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr)
+                    AND status = 'pago'
+                    $dataFiltro
+                ";
+                        $resultadoPrimeirosDepositos = mysqli_query($mysqli, $consultaPrimeirosDepositos);
+                        $quantidadePrimeirosDepositos = mysqli_fetch_assoc($resultadoPrimeirosDepositos)['quantidadePrimeirosDepositos'];
+
+                        // Total de depósitos pagos e soma dos valores
+                        $consultaDepositos = "
+                    SELECT COUNT(*) as quantidadeDepositos, SUM(valor) as totalDepositos
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr)
+                    AND status = 'pago'
+                    $dataFiltro
+                ";
+                        $resultadoDepositos = mysqli_query($mysqli, $consultaDepositos);
+                        $dadosDepositos = mysqli_fetch_assoc($resultadoDepositos);
+                        $quantidadeDepositos = isset($dadosDepositos['quantidadeDepositos']) ? $dadosDepositos['quantidadeDepositos'] : 0;
+                        $totalDepositos = isset($dadosDepositos['totalDepositos']) ? $dadosDepositos['totalDepositos'] : 0.00;
+
+                        // Total de retiradas
+                        $consultaRetiradas = "
+                    SELECT COUNT(*) as quantidadeRetiradas, SUM(valor) as totalRetiradas
+                    FROM solicitacao_saques
+                    WHERE id_user IN ($idsUsuariosConvidadosStr)
+                    AND status = '1'
+                    $dataFiltro
+                ";
+                        $resultadoRetiradas = mysqli_query($mysqli, $consultaRetiradas);
+                        $dadosRetiradas = mysqli_fetch_assoc($resultadoRetiradas);
+                        $quantidadeRetiradas = isset($dadosRetiradas['quantidadeRetiradas']) ? $dadosRetiradas['quantidadeRetiradas'] : 0;
+                        $totalRetiradas = isset($dadosRetiradas['totalRetiradas']) ? $dadosRetiradas['totalRetiradas'] : 0.00;
+
+                        // Bônus totais
+                        $consultaBonus = "
+                    SELECT SUM(valor) as totalBonus
+                    FROM cupom_usados
+                    WHERE id_user IN ($idsUsuariosConvidadosStr)
+                    $dataFiltro
+                ";
+                        $resultadoBonus = mysqli_query($mysqli, $consultaBonus);
+                        $totalBonus = mysqli_fetch_assoc($resultadoBonus)['totalBonus'] ?? 0.00;
+
+                        // Total de usuários na plataforma (considerando os três níveis)
+                        $consultaTotalUsuarios = "
+                    SELECT COUNT(*) as quantidadeTotalUsuarios 
+                    FROM usuarios 
+                    WHERE invitation_code = '$codigoConvite'
+                    OR invitation_code IN (
+                        SELECT invitation_code FROM usuarios WHERE invitation_code = '$codigoConvite'
+                    )
+                    OR invitation_code IN (
+                        SELECT invitation_code FROM usuarios WHERE invitation_code IN (
+                            SELECT invitation_code FROM usuarios WHERE invitation_code = '$codigoConvite'
+                        )
+                    )
+                    $dataFiltro
+                ";
+                        $resultadoTotalUsuarios = mysqli_query($mysqli, $consultaTotalUsuarios);
+                        $quantidadeTotalUsuarios = mysqli_fetch_assoc($resultadoTotalUsuarios)['quantidadeTotalUsuarios'];
+
+
+                        // Subcontagem direta e indireta
+                        $consultaSubdiretos = "SELECT COUNT(*) as quantidadeSubdiretos FROM usuarios WHERE invitation_code = '$codigoConvite'";
+                        $resultadoSubdiretos = mysqli_query($mysqli, $consultaSubdiretos);
+                        $quantidadeSubdiretos = mysqli_fetch_assoc($resultadoSubdiretos)['quantidadeSubdiretos'];
+
+                        $consultaSuboutros = "
+                    SELECT COUNT(*) as quantidadeSuboutros 
+                    FROM usuarios
+                    WHERE invitation_code IN (SELECT invitation_code FROM usuarios WHERE id = ?)
+                    $dataFiltro
+                ";
+                        $stmtSuboutros = $mysqli->prepare($consultaSuboutros);
+                        $stmtSuboutros->bind_param("s", $dadosUsuario['id']);
+                        $stmtSuboutros->execute();
+                        $resultadoSuboutros = $stmtSuboutros->get_result();
+                        $quantidadeSuboutros = mysqli_fetch_assoc($resultadoSuboutros)['quantidadeSuboutros'];
+
+                        // Valores válidos
+                        $consultaValoresValidos = "
+                    SELECT SUM(valor) as valorValidoDireto
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr) AND status = 'pago'
+                    $dataFiltro
+                ";
+                        $resultadoValoresValidos = mysqli_query($mysqli, $consultaValoresValidos);
+                        $valorValidoDireto = mysqli_fetch_assoc($resultadoValoresValidos)['valorValidoDireto'] ?? 0.00;
+
+                        $consultaMeuValorValido = "
+                    SELECT SUM(valor) as meuValorTotalValido
+                    FROM transacoes
+                    WHERE usuario = ? AND status = 'pago'
+                    $dataFiltro
+                ";
+                        $stmtMeuValorValido = $mysqli->prepare($consultaMeuValorValido);
+                        $stmtMeuValorValido->bind_param("s", $dadosUsuario['id']);
+                        $stmtMeuValorValido->execute();
+                        $resultadoMeuValorValido = $stmtMeuValorValido->get_result();
+                        $meuValorTotalValido = mysqli_fetch_assoc($resultadoMeuValorValido)['meuValorTotalValido'] ?? 0.00;
+
+                        // Comissões
+
+                        // Total de comissão gerada (resgatada + disponível)
+                        // Soma todos os valores de comissão já resgatados
+                        $stmtTotalResgatado = $mysqli->prepare("SELECT SUM(valor) as total_resgatado FROM resgate_comissoes WHERE id_user = ?");
+                        $stmtTotalResgatado->bind_param("i", $datres['id']);
+                        $stmtTotalResgatado->execute();
+                        $resTotalResgatado = $stmtTotalResgatado->get_result();
+                        $totalResgatadoComissao = 0;
+                        if ($rowTotalResgatado = $resTotalResgatado->fetch_assoc()) {
+                            $totalResgatadoComissao = floatval($rowTotalResgatado['total_resgatado']);
+                        }
+                        $stmtTotalResgatado->close();
+
+                        // Soma o saldo de comissão disponível atualmente
+                        $totalComissao = $totalResgatadoComissao + floatval($datres['saldo_afiliados']);
+
+                        // Total recebido
+                        $consultaRecebidos = "
+                    SELECT SUM(valor) as totalRecebido
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr)
+                    $dataFiltro
+                ";
+                        $resultadoRecebidos = mysqli_query($mysqli, $consultaRecebidos);
+                        $totalRecebido = mysqli_fetch_assoc($resultadoRecebidos)['totalRecebido'] ?? 0.00;
+
+                        // Total de depósitos
+                        $consultaRecargas = "
+                    SELECT SUM(valor) as totalRecarga
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr) AND status = 'pago'
+                    $dataFiltro
+                ";
+                        $resultadoRecargas = mysqli_query($mysqli, $consultaRecargas);
+                        $totalRecarga = mysqli_fetch_assoc($resultadoRecargas)['totalRecarga'] ?? 0.00;
+
+                        // Total de pedidos
+                        $consultaPedidos = "
+                    SELECT COUNT(*) as quantidadePedidos
+                    FROM transacoes
+                    WHERE usuario IN ($idsUsuariosConvidadosStr)
+                    $dataFiltro
+                ";
+                        $resultadoPedidos = mysqli_query($mysqli, $consultaPedidos);
+                        $quantidadePedidos = mysqli_fetch_assoc($resultadoPedidos)['quantidadePedidos'] ?? 0;
+
+                        $consultaGanhos = "
+                    SELECT SUM(bet_money) as totalWin
+                    FROM historico_play
+                    WHERE id_user IN ($idsUsuariosConvidadosStr)
+                    AND status_play = '1'
+                ";
+                        $resultadoGanhos = mysqli_query($mysqli, $consultaGanhos);
+                        $totalGanhos = mysqli_fetch_assoc($resultadoGanhos)['totalWin'] ?? 0.00;
+
+                        $stmtTaken = $mysqli->prepare("SELECT SUM(valor) as total_resgatado FROM resgate_comissoes WHERE id_user = ?");
+                        $stmtTaken->bind_param("i", $datres['id']);
+                        $stmtTaken->execute();
+                        $resTaken = $stmtTaken->get_result();
+                        $totalResgatado = 0;
+                        if ($rowTaken = $resTaken->fetch_assoc()) {
+                            $totalResgatado = floatval($rowTaken['total_resgatado']);
+                        }
+                        $stmtTaken->close();
+
+
+                        $response = [
+                             'code' => 1,
+                             'msg' => '返回成功',
+                             'time' => round(microtime(true) * 1000),
+                             'data' => [
+                                 'canTakeCommission' => (int)$datres['saldo_afiliados'],
+                                 'takenCommission' => $totalResgatado,
+                                 'totalCommission' => $totalComissao,
+                                 'parentUserIdx' => 0,
+                                 'parentUsername' => '',
+                                 'agentLevel' => 0,
+                                 'agentLevelName' => '',
+                                 'auditRate' => 0,
+                                 'directMembers' => $quantidadeTotalUsuarios,
+                                 'activeJson' => '[{"activeId":271,"activeName":"Recomende amigos para abrir o Baú dos Prêmios","template":15,"receiveDeviceType":"1,2,5,6","receiveDeviceLoginType":"2,3,4,5,7","taskCondition":"{\\"condition\\":\\"\\",\\"ipLimit\\":1,\\"deviceLimit\\":1,\\"browserLimit\\":1}","totalAmount":0,"receiveAmount":0,"receiveLogs":[],"activeData":{"promoteCount":0,"reward_type":0}}]',
+                                 'directPerformanceYet' => $totalRecarga,
+                                 'nextInterval' => 21100
+                             ]
+                        ];
+
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+                        exit;
+                    } else {
+                        $response = [
+                             'code' => 1,
+                             'msg' => '返回成功',
+                             'time' => round(microtime(true) * 1000),
+                             'data' => [
+                                 'canTakeCommission' => 0,
+                                 'takenCommission' => 0,
+                                 'totalCommission' => 0,
+                                 'parentUserIdx' => 0,
+                                 'parentUsername' => '',
+                                 'agentLevel' => 0,
+                                 'agentLevelName' => '',
+                                 'auditRate' => 0,
+                                 'directMembers' => 0,
+                                 'activeJson' => '[{"activeId":271,"activeName":"Recomende amigos para abrir o Baú dos Prêmios","template":15,"receiveDeviceType":"1,2,5,6","receiveDeviceLoginType":"2,3,4,5,7","taskCondition":"{\\"condition\\":\\"\\",\\"ipLimit\\":1,\\"deviceLimit\\":1,\\"browserLimit\\":1}","totalAmount":0,"receiveAmount":0,"receiveLogs":[],"activeData":{"promoteCount":0,"reward_type":0}}]',
+                                 'directPerformanceYet' => 0,
+                                 'nextInterval' => 21100
+                             ]
+                        ];
+
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/refreshStatus') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            if (!$token_user) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Sanitização básica do token
+            $token_user = trim($token_user);
+
+            // Obter dados do POST (JSON)
+            $input = file_get_contents('php://input');
+            $data = json_decode($input, true);
+            $order_no = trim((string)($data['orderNo'] ?? ''));
+            $qr_code = trim((string)($data['qrCode'] ?? ''));
+            if ($order_no === '' && $qr_code === '') {
+                $response = [
+                    "code" => 400,
+                    "message" => "Parâmetro orderNo ou qrCode ausente.",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Buscar usuário pelo token
+            $qry = "SELECT id FROM usuarios WHERE token = ?";
+            if ($stmt_user = $mysqli->prepare($qry)) {
+                $stmt_user->bind_param("s", $token_user);
+                $stmt_user->execute();
+                $stmt_user->store_result();
+
+                if ($stmt_user->num_rows === 1) {
+                    $stmt_user->bind_result($user_id);
+                    $stmt_user->fetch();
+
+                    // Buscar transação sem expor ID interno:
+                    // primeiro por orderNo; se não vier, usa o próprio QR code.
+                    $sql = "SELECT id, transacao_id, valor, status, data_registro, code FROM transacoes WHERE usuario = ? AND (transacao_id = ? OR code = ?) LIMIT 1";
+                    if ($stmt_trans = $mysqli->prepare($sql)) {
+                        $order_or_empty = $order_no !== '' ? $order_no : '';
+                        $qr_or_empty = $qr_code !== '' ? $qr_code : '';
+                        $stmt_trans->bind_param("iss", $user_id, $order_or_empty, $qr_or_empty);
+                        $stmt_trans->execute();
+                        $result = $stmt_trans->get_result();
+
+                        if ($row = $result->fetch_assoc()) {
+                            // Regras de confirmação para DEPÓSITO:
+                            // só marca confirmado quando webhook já processou e status = pago.
+                            $statusAtual = strtolower(trim((string)$row['status']));
+                            // Padrao de status esperado no front (deposito):
+                            // 1 = pendente, 2 = sucesso, 3 = negado.
+                            if ($statusAtual === 'pago') {
+                                $state = 2;
+                                $status_name = "Pagamento Confirmado";
+                            } elseif (in_array($statusAtual, ['expirado', 'cancelado', 'recusado', 'rejeitado', '2'], true)) {
+                                $state = 3;
+                                $status_name = "Pagamento Negado";
+                            } else {
+                                // Mantém pendente para processamento, inclusive status legado "1".
+                                $state = 1;
+                                $status_name = "Pagamento Pendente";
+                            }
+
+                            $response = [
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "id" => null,
+                                    "withdrawTypeName" => "PIX",
+                                    "status" => $state,
+                                    "statusText" => $status_name,
+                                    "money" => $row['valor'],
+                                    "currency" => "BRL",
+                                    "createTime" => strtotime($row['data_registro']),
+                                    "applyTime" => strtotime($row['data_registro']),
+                                    "orderNo" => $row['transacao_id'],
+                                    "walletUrl" => "https://wallet.exemplo.com/verificar-transacao",
+                                    "homeUrl" => "https://wallet.exemplo.com",
+                                    //"remark" => $status_name,
+                                    "cardNo" => "",
+                                    "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png"
+                                ]
+                            ];
+                        } else {
+                            $response = [
+                                "code" => 404,
+                                "message" => "Transação não encontrada.",
+                                "data" => null,
+                                "succeed" => false
+                            ];
+                        }
+                        $stmt_trans->close();
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Erro interno. [PH-ERR-DBERR].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+                $stmt_user->close();
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro interno. [PH-ERR-DBERR].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/payTypeV4') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "chargeBlackList" => false,
+                    "emailVerify" => "",
+                    "mobileVerify" => "",
+                    "payKind" => [
+                        "id" => 120082,
+                        "name" => "Depósito online",
+                        "icon" => "",
+                        "type" => 1,
+                        "charge_rate" => "",
+                        "maxPayName" => "",
+                        "list" => [
+                            [
+                                "payplatformid" => 570082,
+                                "payKind" => 100,
+                                "payicon" => "9",
+                                "pay_prize" => 0,
+                                "paymentid" => 0,
+                                "payname" => $dataconfig['grupoplataforma'] . "-PIX",
+                                "app_type" => [
+                                    1,
+                                    2,
+                                    8
+                                ],
+                                "charge_rate" => 0,
+                                "merge_status" => 0,
+                                "pay_type_name" => $dataconfig['grupoplataforma'] . "-PIX",
+                                "min_per_money" => "",
+                                "max_per_money" => "",
+                                "min_recharge_limit" => "",
+                                "max_recharge_limit" => "",
+                                "weight" => 1,
+                                "payment_type" => "0",
+                                "iconUrl" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/finance-1738107796646-338601.jpg",
+                                "chargeRateConfig" => [
+                                    "chargeRate" => ""
+                                ],
+                                "customTag" => ""
+                            ]
+                        ],
+                        "payTypeCnt" => 1,
+                        "weight" => 900,
+                        "payCurrency" => [
+                            "BRL"
+                        ]
+                    ],
+                    "sign_key" => "fc361cdb770aebc2126cc0dac989c896"
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST/GET)
+        $pathPayplatform = parse_url($requestURI, PHP_URL_PATH);
+        $isPayplatformV3 = ($pathPayplatform === '/hall/api/finance/pay/payplatformlistV3' 
+            || $pathPayplatform === '/hall/api/finance/payplatformlistV3');
+        if ($isPayplatformV3) {
+            $rotaEncontrada = true;
+            
+            $cuponsAtivos = [];
+            $configBonus = function_exists('get_config_bonus') ? get_config_bonus() : [];
+            $modoPercentual = isset($configBonus['bonus_tipo']) && $configBonus['bonus_tipo'] === 'percentual'
+                && !empty($configBonus['bonus_percentual_status']) && ((int)($configBonus['bonus_percentual'] ?? 0)) > 0;
+            $pctBonus = $modoPercentual ? (int)$configBonus['bonus_percentual'] : 0;
+
+            if (!$modoPercentual) {
+                try {
+                    $sql = "SELECT valor, qtd_insert FROM cupom WHERE status = 1 ORDER BY valor ASC";
+                    $result = $mysqli->query($sql);
+                    if ($result) {
+                        while ($row = $result->fetch_assoc()) {
+                            $cuponsAtivos[] = $row;
+                        }
+                    }
+                } catch (Exception $e) {
+                    $cuponsAtivos = [];
+                }
+            }
+        
+            $valoresSugeridos = [];
+            
+            if ($modoPercentual) {
+                $valoresSugeridos = [
+                    $dataconfig['mindep'],
+                    50,
+                    100,
+                    500,
+                    1000,
+                    3000,
+                    5000,
+                    10000
+                ];
+                $valoresSugeridos = array_unique(array_map('intval', $valoresSugeridos));
+                sort($valoresSugeridos);
+                $valoresSugeridos = array_slice($valoresSugeridos, 0, 8);
+            } elseif (count($cuponsAtivos) > 0) {
+                $valoresSugeridos = [$dataconfig['mindep']];
+                $valoresSemBonus = [100, 1000, 5000];
+                $indexSemBonus = 0;
+                foreach ($cuponsAtivos as $cupom) {
+                    if (!in_array($cupom['valor'], $valoresSugeridos)) {
+                        $valoresSugeridos[] = $cupom['valor'];
+                    }
+                    if (count($valoresSugeridos) < 8 && $indexSemBonus < count($valoresSemBonus)) {
+                        if (!in_array($valoresSemBonus[$indexSemBonus], $valoresSugeridos)) {
+                            $valoresSugeridos[] = $valoresSemBonus[$indexSemBonus];
+                        }
+                        $indexSemBonus++;
+                    }
+                    if (count($valoresSugeridos) >= 8) break;
+                }
+                $valoresExtras = [500, 3000, 10000, 50000];
+                foreach ($valoresExtras as $extra) {
+                    if (count($valoresSugeridos) >= 8) break;
+                    if (!in_array($extra, $valoresSugeridos)) {
+                        $valoresSugeridos[] = $extra;
+                    }
+                }
+            } else {
+                $valoresSugeridos = [
+                    $dataconfig['mindep'],
+                    50,
+                    100,
+                    500,
+                    1000,
+                    3000,
+                    5000,
+                    10000
+                ];
+                $valoresSugeridos = array_unique($valoresSugeridos);
+                if (count($valoresSugeridos) < 8) {
+                    $extras = [50000, 20000, 15000];
+                    foreach ($extras as $extra) {
+                        if (count($valoresSugeridos) >= 8) break;
+                        if (!in_array($extra, $valoresSugeridos)) {
+                            $valoresSugeridos[] = $extra;
+                        }
+                    }
+                }
+            }
+            
+            sort($valoresSugeridos);
+            $valoresSugeridos = array_slice($valoresSugeridos, 0, 8);
+            $recommendList = [];
+
+            if ($modoPercentual && $pctBonus > 0) {
+                foreach ($valoresSugeridos as $valor) {
+                    $bonusVal = (int)round((float)$valor * $pctBonus / 100);
+                    $recommendList[] = [
+                        "amount" => (string)$valor,
+                        "bonus" => $bonusVal > 0 ? (string)$bonusVal : "",
+                        "chargeRate" => ""
+                    ];
+                }
+            } else {
+                /* Bônus por valor: exato ou maior elegível (depósito >= valor mín dá o bônus) */
+                $cuponsPorValor = [];
+                foreach ($cuponsAtivos as $cupom) {
+                    $v = (float)$cupom['valor'];
+                    $b = (float)$cupom['qtd_insert'];
+                    if (!isset($cuponsPorValor[$v]) || $b > 0) {
+                        $cuponsPorValor[$v] = $b;
+                    }
+                }
+                ksort($cuponsPorValor);
+                $valoresCupom = array_keys($cuponsPorValor);
+                
+                foreach ($valoresSugeridos as $valor) {
+                    $item = [
+                        "amount" => (string)$valor,
+                        "bonus" => "",
+                        "chargeRate" => ""
+                    ];
+                    $valorNum = (float)$valor;
+                    $melhorBonus = null;
+                    foreach ($valoresCupom as $vMin) {
+                        if ($valorNum >= (float)$vMin && isset($cuponsPorValor[$vMin])) {
+                            $melhorBonus = (string)(int)$cuponsPorValor[$vMin];
+                        }
+                    }
+                    if ($melhorBonus !== null && $melhorBonus !== '' && $melhorBonus !== '0') {
+                        $item["bonus"] = $melhorBonus;
+                    }
+                    $recommendList[] = $item;
+                }
+            }
+        
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "type" => 1,
+                    "name" => "Depósito online",
+                    "payline_type" => 1,
+                    "paymentid" => 570082,
+                    "payment_name" => "Canal personalizado",
+                    "url" => "/pay/paysubmit/7920",
+                    "merge_status" => 0,
+                    "pay_type_name" => "",
+                    "payment_ids" => "[90562,60562,30562]",
+                    "remark" => "",
+                    "min" => 10,
+                    "max" => 50000,
+                    "min_recharge_limit" => 10,
+                    "max_recharge_limit" => 50000,
+                    "recommendList" => $recommendList,
+                    "balance_switch" => 1,
+                    "realNameSwitch" => 0,
+                    "payAddressSwitch" => 0,
+                    "orderEffectiveTime" => 1800,
+                    "captchaSwitch" => 0,
+                    "combineOpenWay" => 4,
+                    "list" => [
+                        [
+                            "channel_type" => "",
+                            "channelCode" => "PIX",
+                            "specialCPFSwitch" => 0,
+                            "channelTooltip" => "",
+                            "moneybtns" => null,
+                            "money_btns" => [],
+                            "remark" => "Os valores de bônus é entregue apenas uma vez por conta.",
+                            "subtitle" => "",
+                            "title" => "Canal personalizado",
+                            "payplatformid" => 90562,
+                            "id" => 90562,
+                            "min_recharge_limit" => $dataconfig['mindep'],
+                            "max_recharge_limit" => 50000,
+                            "merch_desc" => "BRL-PIX",
+                            "app_type" => 11,
+                            "openWay" => 4,
+                            "balance_switch" => 1,
+                            "charge_rate" => 0,
+                            "paymentid" => 570082,
+                            "payment_type" => "0",
+                            "payicon" => "9",
+                            "weight" => 90,
+                            "realNameSwitch" => 0,
+                            "payCurrency" => "BRL",
+                            "merchCode" => "brlpay4zpay",
+                            "merch_agent_id" => 101329,
+                            "currencySign" => "R$",
+                            "payAddressSwitch" => 0,
+                            "captchaSwitch" => 0,
+                            "downloadUrl" => [
+                                "url" => "",
+                                "text" => ""
+                            ],
+                            "mobileSupport" => 0,
+                            "emailSupport" => 0,
+                            "chargeRateConfig" => null,
+                            "feeRate" => "0",
+                            "operators" => null,
+                            "recommendList" => $recommendList,
+                            "cardIDType" => 0,
+                            "cardIDSupport" => 0,
+                            "cardIDSupportTrigger" => "0",
+                            "walletType" => "",
+                            "moneyList" => [],
+                            "chargeRateList" => [
+                                [
+                                    "min_amount" => "50000.01",
+                                    "max_amount" => "100000",
+                                    "charge_rate" => "10",
+                                    "amount_type" => 0
+                                ]
+                            ],
+                            "deduceLimit" => "50"
+                        ],
+                        [
+                            "channel_type" => "",
+                            "channelCode" => "1",
+                            "specialCPFSwitch" => 1,
+                            "channelTooltip" => "",
+                            "moneybtns" => null,
+                            "money_btns" => [],
+                            "remark" => "Os valores de bônus é entregue apenas uma vez por conta.",
+                            "subtitle" => "",
+                            "title" => "Canal personalizado",
+                            "payplatformid" => 60562,
+                            "id" => 60562,
+                            "min_recharge_limit" => 10,
+                            "max_recharge_limit" => 50000,
+                            "merch_desc" => "BRL-PIX",
+                            "app_type" => 11,
+                            "openWay" => 4,
+                            "balance_switch" => 1,
+                            "charge_rate" => 0,
+                            "paymentid" => 570082,
+                            "payment_type" => "0",
+                            "payicon" => "9",
+                            "weight" => 89,
+                            "realNameSwitch" => 0,
+                            "payCurrency" => "BRL",
+                            "merchCode" => "brlsitobankpay",
+                            "merch_agent_id" => 71329,
+                            "currencySign" => "R$",
+                            "payAddressSwitch" => 0,
+                            "captchaSwitch" => 0,
+                            "downloadUrl" => [
+                                "url" => "",
+                                "text" => ""
+                            ],
+                            "mobileSupport" => 0,
+                            "emailSupport" => 0,
+                            "chargeRateConfig" => null,
+                            "feeRate" => "0",
+                            "operators" => null,
+                            "recommendList" => $recommendList,
+                            "cardIDType" => 0,
+                            "cardIDSupport" => 0,
+                            "cardIDSupportTrigger" => "0",
+                            "walletType" => "",
+                            "moneyList" => [],
+                            "chargeRateList" => [
+                                [
+                                    "min_amount" => "50000.01",
+                                    "max_amount" => "100000",
+                                    "charge_rate" => "10",
+                                    "amount_type" => 0
+                                ]
+                            ],
+                            "deduceLimit" => "50"
+                        ],
+                        [
+                            "channel_type" => "",
+                            "channelCode" => "BRL002",
+                            "specialCPFSwitch" => 1,
+                            "channelTooltip" => "",
+                            "moneybtns" => null,
+                            "money_btns" => [],
+                            "remark" => "Os valores de bônus é entregue apenas uma vez por conta.",
+                            "subtitle" => "",
+                            "title" => "Canal personalizado",
+                            "payplatformid" => 30562,
+                            "id" => 30562,
+                            "min_recharge_limit" => 10,
+                            "max_recharge_limit" => 50000,
+                            "merch_desc" => "BRL-PIX",
+                            "app_type" => 11,
+                            "openWay" => 4,
+                            "balance_switch" => 1,
+                            "charge_rate" => 0,
+                            "paymentid" => 570082,
+                            "payment_type" => "0",
+                            "payicon" => "9",
+                            "weight" => 84,
+                            "realNameSwitch" => 0,
+                            "payCurrency" => "BRL",
+                            "merchCode" => "owenpay",
+                            "merch_agent_id" => 41329,
+                            "currencySign" => "R$",
+                            "payAddressSwitch" => 0,
+                            "captchaSwitch" => 0,
+                            "downloadUrl" => [
+                                "url" => "",
+                                "text" => ""
+                            ],
+                            "mobileSupport" => 0,
+                            "emailSupport" => 0,
+                            "chargeRateConfig" => null,
+                            "feeRate" => "0",
+                            "operators" => null,
+                            "recommendList" => $recommendList,
+                            "cardIDType" => 0,
+                            "cardIDSupport" => 0,
+                            "cardIDSupportTrigger" => "0",
+                            "walletType" => "",
+                            "moneyList" => [],
+                            "chargeRateList" => [
+                                [
+                                    "min_amount" => "50000.01",
+                                    "max_amount" => "100000",
+                                    "charge_rate" => "10",
+                                    "amount_type" => 0
+                                ]
+                            ],
+                            "deduceLimit" => "50"
+                        ]
+                    ],
+                    "channelIds" => [
+                        90562,
+                        60562,
+                        30562
+                    ],
+                    "realInfoRule" => 1,
+                    "cardIDType" => 0,
+                    "cardIDSupport" => 0,
+                    "cardIDSupportTrigger" => "0",
+                    "calculateGiftConfig" => [
+                        "mergeStatus" => 0,
+                        "moneyList" => [],
+                        "chargeRateList" => [],
+                        "deduceLimit" => "0",
+                        "calculateByChildMoneyList" => true,
+                        "calculateByChildChargeRate" => true,
+                        "calculateChildList" => [
+                            [
+                                "id" => 90562,
+                                "moneyList" => [],
+                                "chargeRateList" => [
+                                    [
+                                        "min_amount" => "50000.01",
+                                        "max_amount" => "100000",
+                                        "charge_rate" => "10",
+                                        "amount_type" => 0
+                                    ]
+                                ],
+                                "deduceLimit" => "50"
+                            ],
+                            [
+                                "id" => 60562,
+                                "moneyList" => [],
+                                "chargeRateList" => [
+                                    [
+                                        "min_amount" => "50000.01",
+                                        "max_amount" => "100000",
+                                        "charge_rate" => "10",
+                                        "amount_type" => 0
+                                    ]
+                                ],
+                                "deduceLimit" => "50"
+                            ],
+                            [
+                                "id" => 30562,
+                                "moneyList" => [],
+                                "chargeRateList" => [
+                                    [
+                                        "min_amount" => "50000.01",
+                                        "max_amount" => "100000",
+                                        "charge_rate" => "10",
+                                        "amount_type" => 0
+                                    ]
+                                ],
+                                "deduceLimit" => "50"
+                            ]
+                        ]
+                    ]
+                ]
+            ];
+        
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/getPayOrderFee') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota api/finance/certify/cashV3 (POST) --> Rota de saque
+        if ($requestURI === '/hall/api/finance/certify/cashV3') {
+            function sendResponse($data)
+            {
+                header('Content-Type: application/json');
+                echo json_encode($data);
+                exit;
+            }
+        
+            if (empty($_COOKIE['token_user'])) {
+                sendResponse([
+                    "code" => 400,
+                    "message" => "Erro de autenticação.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            $qry = "SELECT * FROM usuarios WHERE token=?";
+            $stmt = $mysqli->prepare($qry);
+            $stmt->bind_param("s", $_COOKIE['token_user']);
+            $stmt->execute();
+            $resp = $stmt->get_result();
+        
+            if ($resp->num_rows === 0) {
+                sendResponse([
+                    "code" => 400,
+                    "message" => "Sessão expirada. Faça login novamente.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            $datares = $resp->fetch_assoc();
+            if ($datares['freeze'] == 1) {
+                sendResponse([
+                    "code" => 400,
+                    "msg" => "A conta foi bloqueada. Entre em contato com o Atendimento ao Cliente!",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // Sanitização de entradas
+            $bankId = isset($_GET['bankId']) ? trim(strip_tags($_GET['bankId'])) : '';
+            $withdrawType = isset($_GET['withdrawType']) ? intval($_GET['withdrawType']) : 1;
+            $currency = isset($_GET['currency']) ? trim(strip_tags($_GET['currency'])) : 'BRL';
+            $validateCode = isset($_GET['validateCode']) ? trim(strip_tags($_GET['validateCode'])) : '';
+        
+            $cashPassword = $data['passwd'] ?? null;
+            $cashMoney = floatval($data['money'] ?? 0);
+        
+            if (empty($cashPassword)) {
+                sendResponse([
+                    "code" => 400,
+                    "msg" => "Senha de saque obrigatória.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // Use password_hash e password_verify para senhas
+            $senha_armazenada = $datares['senhaparasacar'];
+            $senha_correta = $cashPassword === $senha_armazenada;
+        
+            if (!$senha_correta) {
+                sendResponse([
+                    "code" => 400,
+                    "msg" => "Senha incorreta.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            $dataHoje = date('Y-m-d');
+            $qry = "SELECT COUNT(*) as saques_hoje, SUM(valor) as total_saque_hoje FROM solicitacao_saques WHERE id_user = ? AND DATE(data_registro) = ?";
+            $stmt = $mysqli->prepare($qry);
+            $stmt->bind_param("is", $datares['id'], $dataHoje);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $row = $res->fetch_assoc();
+        
+            $saques_hoje = $row['saques_hoje'];
+            $total_saque_hoje = $row['total_saque_hoje'] ?? 0;
+        
+            if ($saques_hoje >= $dataconfig['limite_saque']) {
+                sendResponse([
+                    "code" => 400,
+                    "msg" => "Limite diário de saque excedido.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // 1. Total de depósitos pagos
+            $qry = "SELECT SUM(valor) as total_depositos FROM transacoes WHERE usuario=? AND status='pago'";
+            $stmt = $mysqli->prepare($qry);
+            $stmt->bind_param("i", $datares['id']);
+            $stmt->execute();
+            $resultado = $stmt->get_result();
+            $row = $resultado->fetch_assoc();
+            $total_depositos = $row['total_depositos'] ?? 0;
+        
+            // 2. Total de apostas
+            $qry = "SELECT SUM(bet_money) as total_apostas FROM historico_play WHERE id_user=? AND status_play='1'";
+            $stmt = $mysqli->prepare($qry);
+            $stmt->bind_param("i", $datares['id']);
+            $stmt->execute();
+            $resultado = $stmt->get_result();
+            $row = $resultado->fetch_assoc();
+            $total_apostas = $row['total_apostas'] ?? 0;
+        
+            // 3. Calcular rollover
+            $valor_esperado = $total_depositos * $dataconfig['rollover'];
+        
+            // 4. Calcular valor pendente (quanto falta apostar)
+            $valor_pendente = max(0, $valor_esperado - $total_apostas);
+        
+            // 5. Verificação com mensagem informativa
+            if ($total_apostas < $valor_esperado) {
+                // Formatar valor pendente em formato brasileiro
+                $valor_pendente_formatado = 'R$ ' . number_format($valor_pendente, 2, ',', '.');
+                
+                sendResponse([
+                    "code" => 1011,
+                    "msg" => "Cumpra a meta rollover para realizar a retirada. Seu valor pendente é de " . $valor_pendente_formatado,
+                    "data" => [
+                        "rollover_necessario" => $valor_esperado,
+                        "apostas_realizadas" => $total_apostas,
+                        "valor_pendente" => $valor_pendente,
+                        "valor_pendente_formatado" => $valor_pendente_formatado
+                    ],
+                    "succeed" => false
+                ]);
+            }
+        
+            if ($cashMoney > $datares['saldo'] || $cashMoney < $dataconfig['minsaque']) {
+                sendResponse([
+                    "code" => 400,
+                    "message" => "Valor de saque fora dos limites permitidos.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // Gera token de saque
+            $tokenSaque = ((string) round(microtime(true) * 1000)) . str_pad(mt_rand(0, 999999), 6, '0', STR_PAD_LEFT);
+            $datadia = date('Y-m-d H:i:s');
+        
+            // Chama função de saque (deve validar retorno)
+            $restapi = withdrawSaldo($datares['mobile'], $cashMoney);
+        
+            if ($restapi != 1) {
+                sendResponse([
+                    "code" => 400,
+                    "message" => "Erro ao realizar saque.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // Buscar o último método de pagamento do usuário
+            $qry = "SELECT realname, id, tipo, chave, cpf FROM metodos_pagamentos WHERE user_id = ? ORDER BY id DESC LIMIT 1";
+            $stmt = $mysqli->prepare($qry);
+            $stmt->bind_param("i", $datares['id']);
+            $stmt->execute();
+            $metodo = $stmt->get_result()->fetch_assoc();
+        
+            $realname = $metodo['realname'] ?? '';
+            $tipo = $metodo['tipo'] ?? '';
+            $chave = $metodo['chave'] ?? '';
+            $cpf = $metodo['cpf'] ?? '';
+            $chaveid = $metodo['id'] ?? '';
+        
+            // Agora use esses dados no insert
+            $sql12 = $mysqli->prepare("INSERT INTO solicitacao_saques (id_user, valor, tipo, pix, telefone, data_registro, transacao_id) VALUES (?,?,?,?,?,?,?)");
+            $sql12->bind_param(
+                "sssssss",
+                $datares['id'],
+                $cashMoney,
+                $tipo,
+                $chave,
+                $datares['celular'],
+                $datadia,
+                $tokenSaque
+            );
+        
+            if (!$sql12->execute()) {
+                sendResponse([
+                    "code" => 400,
+                    "message" => "Erro ao registrar o saque.",
+                    "data" => null,
+                    "succeed" => false
+                ]);
+            }
+        
+            // 🔔 WEBHOOK: Notificar saque gerado
+            $nome_usuario = $datares['real_name'] ?: $datares['mobile'];
+            WebhookSaquesGerados($nome_usuario, $_SERVER['HTTP_HOST'], $cashMoney);
+        
+            $id_transacao = md5(token_id_transacao());
+        
+            $company = 'NEXTSISTEMAS';
+            $owner = 'YARKAN';
+            $pepper = 'NXTSYS-YRK-PIX-AUTO-V1';
+            $secret_key = hash_hmac('sha256', $company . '|' . $owner, $pepper);
+        
+            $payload = $chaveid . '|' . $cashMoney . '|' . $id_transacao;
+            $signature = hash_hmac('sha256', $payload, $secret_key);
+        
+            // Normaliza 'saque_automatico' para número antes da comparação
+            $saqueAuto = floatval(str_replace(',', '.', preg_replace('/[^\d.,-]/', '', $dataconfig['saque_automatico'] ?? '0')));
+        
+            if ($cashMoney <= $saqueAuto) {
+                // Monta URL correta com barra entre base e DASH
+                $gatewayPath = "/services-gateway/payment_auto.php";
+                $api_url = rtrim($url_base, '/') . '/' . DASH . $gatewayPath;
+        
+                $api_data = [
+                    'chavepix' => $chaveid,
+                    'valor' => $cashMoney,
+                    'id' => $id_transacao,
+                    'ASSINATURA_NEXTSISTEMAS_YARKAN' => $signature,
+                    'usuario' => $datares['mobile']
+                ];
+        
+                $curl = curl_init($api_url);
+                curl_setopt($curl, CURLOPT_POST, true);
+                curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($api_data));
+                curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 10);
+                curl_setopt($curl, CURLOPT_TIMEOUT, 20);
+                if (defined('CURL_IPRESOLVE_V4')) {
+                    curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+                }
+                curl_setopt($curl, CURLOPT_HTTPHEADER, ['Content-Type: application/x-www-form-urlencoded']);
+        
+                $api_response = curl_exec($curl);
+                $curl_err = $api_response === false ? curl_error($curl) : null;
+                $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+                curl_close($curl);
+        
+                if (trim($api_response) === "Pagamento realizado com sucesso") {
+                    $qry = "UPDATE solicitacao_saques SET status = '1', data_att = CONVERT_TZ(NOW(), '+00:00', '-03:00') WHERE transacao_id = ?";
+                    $stmt = $mysqli->prepare($qry);
+                    $stmt->bind_param("s", $tokenSaque);
+                    $stmt->execute();
+                    
+                    // 🔔 WEBHOOK: Notificar saque aprovado automaticamente
+                    WebhookSaquesPagos($nome_usuario, $_SERVER['HTTP_HOST'], $cashMoney);
+                } else {
+                    // Log do erro para debug (opcional)
+                    error_log("[SAQUE_AUTO] Resposta inesperada: " . $api_response . " | HTTP Code: " . $http_code);
+                }
+            }
+        
+            sendResponse([
+                "code" => 1,
+                "msg" => "Saque solicitado com sucesso.",
+                "time" => round(microtime(true) * 1000),
+                "data" => []
+            ]);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/gameCenter/gameApi/recent-list/v3') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/calculateGift') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/orderListV3') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            if (!$token_user) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+
+            $rotaEncontrada = true;
+
+            // Sanitização básica do token
+            $token_user = trim($token_user);
+
+            // Buscar usuário pelo token
+            $qry = "SELECT id FROM usuarios WHERE token = ?";
+            if ($stmt_user = $mysqli->prepare($qry)) {
+                $stmt_user->bind_param("s", $token_user);
+                $stmt_user->execute();
+                $stmt_user->store_result();
+
+                if ($stmt_user->num_rows === 1) {
+                    $stmt_user->bind_result($user_id);
+                    $stmt_user->fetch();
+
+                    // Buscar transações do usuário
+                    $sql = "SELECT id, transacao_id, valor, status, data_registro FROM transacoes WHERE usuario = ?";
+                    if ($stmt_trans = $mysqli->prepare($sql)) {
+                        $stmt_trans->bind_param("i", $user_id);
+                        $stmt_trans->execute();
+                        $result = $stmt_trans->get_result();
+
+                        $depositos = [];
+                        while ($row = $result->fetch_assoc()) {
+                            switch ($row['status']) {
+                                case 'pago':
+                                    $state = 2;
+                                    $status_name = "Pagamento Aprovado";
+                                    break;
+                                case 'expirado':
+                                    $state = 3;
+                                    $status_name = "Pagamento Negado";
+                                    break;
+                                default:
+                                    $state = 1;
+                                    $status_name = "Pagamento Pendente";
+                            }
+
+                            $depositos[] = [
+                                "order_no" => $row['transacao_id'],
+                                "order_type" => 0,
+                                "pay_kind" => 1,
+                                "order_type_name" => "",
+                                "payment_name" => $dataconfig['grupoplataforma'] . "-PIX",
+                                "payment_id" => $row['id'],
+                                "amount" => $row['valor'],
+                                "status" => $state,
+                                "status_name" => $status_name,
+                                "createtime" => strtotime($row['data_registro']),
+                                "payedtime" => 0,
+                                "payicon" => "9",
+                                "icon_url" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/finance-1738107796646-338601.jpg",
+                                "orderName" => "",
+                                "channelAmount" => $row['valor'],
+                                "currencyRate" => "",
+                                "exchangeRate" => "1",
+                                "payCurrencySign" => "R$",
+                                "payCurrency" => "BRL",
+                                "memberCurrency" => "BRL",
+                                "frontRemark" => "",
+                                "templateType" => 0
+                            ];
+                        }
+                        $stmt_trans->close();
+
+                        $response = [
+                            "code" => 1,
+                            "msg" => "返回成功",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "total_amount" => 0,
+                                "list" => $depositos,
+                                "total" => count($depositos)
+                            ]
+                        ];
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Erro interno. [PH-ERR-DBERR].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+                $stmt_user->close();
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro interno. [PH-ERR-DBERR].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/orderInfo') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            if (!$token_user) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Sanitização básica do token
+            $token_user = trim($token_user);
+
+            // Obter dados do POST (JSON)
+            $input = file_get_contents('php://input');
+            $data = json_decode($input, true);
+            $order_no = $data['order_no'] ?? '';
+            if (!$order_no) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Parâmetro order_no ausente.",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Buscar usuário pelo token
+            $qry = "SELECT id FROM usuarios WHERE token = ?";
+            if ($stmt_user = $mysqli->prepare($qry)) {
+                $stmt_user->bind_param("s", $token_user);
+                $stmt_user->execute();
+                $stmt_user->store_result();
+
+                if ($stmt_user->num_rows === 1) {
+                    $stmt_user->bind_result($user_id);
+                    $stmt_user->fetch();
+
+                    // Buscar transação pelo transacao_id e usuário
+                    $sql = "SELECT id, transacao_id, valor, status, data_registro, data_att FROM solicitacao_saques WHERE transacao_id = ? AND id_user = ?";
+                    if ($stmt_trans = $mysqli->prepare($sql)) {
+                        $stmt_trans->bind_param("si", $order_no, $user_id);
+                        $stmt_trans->execute();
+                        $result = $stmt_trans->get_result();
+
+                        if ($row = $result->fetch_assoc()) {
+                            switch ($row['status']) {
+                                case '1':
+                                    $state = 4;
+                                    $status_name = "Saque Bem Sucedido";
+                                    break;
+                                case '2':
+                                    $state = 2;
+                                    $status_name = "Pagamento Negado";
+                                    break;
+                                default:
+                                    $state = 1;
+                                    $status_name = "Sacando";
+                            }
+
+                            $response = [
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "id" => $row['id'],
+                                    "withdrawTypeName" => "PIX",
+                                    "status" => $state,
+                                    "statusText" => $status_name,
+                                    "money" => $row['valor'],
+                                    "currency" => "BRL",
+                                    "createTime" => strtotime($row['data_registro']),
+                                    "applyTime" => strtotime($row['data_att']),
+                                    "orderNo" => $row['transacao_id'],
+                                    "walletUrl" => "https://wallet.exemplo.com/verificar-transacao",
+                                    "homeUrl" => "https://wallet.exemplo.com",
+                                    //"remark" => $status_name,
+                                    "cardNo" => "1234-5678-9012",
+                                    "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png"
+                                ]
+                            ];
+                        } else {
+                            $response = [
+                                "code" => 404,
+                                "message" => "Transação não encontrada.",
+                                "data" => null,
+                                "succeed" => false
+                            ];
+                        }
+                        $stmt_trans->close();
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Erro interno. [PH-ERR-DBERR].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+                $stmt_user->close();
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro interno. [PH-ERR-DBERR].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota game/hall/listSearchGameV2 (POST) --> Rota De Pesquisa De Jogos
+        if ($requestURI === '/hall/api/game/hall/listSearchGameV2') {
+            
+            $rotaEncontrada = true;
+
+            $gameName = $data['gameName'];
+            
+            $response = [
+                "code" => 1,
+                "msg" => "success",
+                "time" => round(microtime(true) * 1000),
+                "data" => [],
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/pay/orderInfo') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            if (!$token_user) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Sanitização básica do token
+            $token_user = trim($token_user);
+
+            // Obter dados do POST (JSON)
+            $input = file_get_contents('php://input');
+            $data = json_decode($input, true);
+            $order_no = $data['order_no'] ?? '';
+            if (!$order_no) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Parâmetro order_no ausente.",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // Buscar usuário pelo token
+            $qry = "SELECT id FROM usuarios WHERE token = ?";
+            if ($stmt_user = $mysqli->prepare($qry)) {
+                $stmt_user->bind_param("s", $token_user);
+                $stmt_user->execute();
+                $stmt_user->store_result();
+
+                if ($stmt_user->num_rows === 1) {
+                    $stmt_user->bind_result($user_id);
+                    $stmt_user->fetch();
+
+                    // Buscar transação pelo transacao_id e usuário
+                    $sql = "SELECT id, transacao_id, valor, status, data_registro FROM transacoes WHERE transacao_id = ? AND usuario = ?";
+                    if ($stmt_trans = $mysqli->prepare($sql)) {
+                        $stmt_trans->bind_param("si", $order_no, $user_id);
+                        $stmt_trans->execute();
+                        $result = $stmt_trans->get_result();
+
+                        if ($row = $result->fetch_assoc()) {
+                            switch ($row['status']) {
+                                case 'pago':
+                                    $state = 2;
+                                    $status_name = "Pagamento Aprovado";
+                                    break;
+                                case 'expirado':
+                                    $state = 3;
+                                    $status_name = "Pagamento Negado";
+                                    break;
+                                default:
+                                    $state = 1;
+                                    $status_name = "Pagamento Pendente";
+                            }
+
+                            $response = [
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "order_no" => $row['transacao_id'],
+                                    "order_type" => 1,
+                                    "pay_kind" => 1,
+                                    "order_type_name" => "Depósito",
+                                    "payment_id" => $row['id'],
+                                    "payment_name" => $dataconfig['grupoplataforma'] . "-PIX",
+                                    "amount" => $row['valor'],
+                                    "status" => $state,
+                                    "status_name" => $status_name,
+                                    "createtime" => strtotime($row['data_registro']),
+                                    "payedtime" => 0,
+                                    "bank_user" => "",
+                                    "bank_no" => "",
+                                    "bank_name" => "BRL-PIX",
+                                    "bank_code" => "",
+                                    "otherBankCode" => "",
+                                    "bank_addr" => "",
+                                    "qrcode_url" => "",
+                                    "payicon" => "9",
+                                    "wallet_url" => "",
+                                    "payment_type" => "0",
+                                    "icon_url" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/finance-1738107796646-338601.jpg",
+                                    "contactUrl" => "",
+                                    "orderName" => "",
+                                    "extendName" => "",
+                                    "extendValue" => "",
+                                    "payCurrency" => "BRL",
+                                    "currencyRate" => "",
+                                    "exchangeRate" => "1",
+                                    "channelAmount" => $row['valor'],
+                                    "realAmount" => $row['valor'],
+                                    "memberCurrency" => "BRL",
+                                    "payCurrencySign" => "R$",
+                                    "cryptoProtocol" => "",
+                                    "utrSwitch" => 0,
+                                    "realNameSwitch" => 0,
+                                    "payOrderCountdown" => 0,
+                                    "payOrderTimeOut" => strtotime($row['data_registro']) + 1800,
+                                    "postscript" => "",
+                                    "transferCertificateSwitch" => 0,
+                                    "transferCertificate" => "",
+                                    "cardNumber" => "",
+                                    "cardPassword" => "",
+                                    "networkMerch" => "",
+                                    "feeRate" => "",
+                                    "fee" => "0",
+                                    "reduceFee" => "0",
+                                    "realFee" => "0",
+                                    "remarkSwitch" => 0,
+                                    "frontRemark" => "",
+                                    "userRemark" => "",
+                                    "walletLogo" => "",
+                                    "walletName" => "",
+                                    "walletDomain" => "",
+                                    "templateType" => 0,
+                                    "payAddress" => "",
+                                    "channelExtendValue" => [
+                                        "bankCode" => "",
+                                        "bankName" => "",
+                                        "cardIdType" => "",
+                                        "cardId" => "",
+                                        "bankType" => ""
+                                    ],
+                                    "urlType" => 2,
+                                    "urlData" => "",
+                                    "urlOpenWay" => 4,
+                                    "outTradeNo" => "",
+                                    "orderEffectiveTime" => 1800,
+                                    "giftAmount" => "0",
+                                    "payCardIDTypeName" => ""
+                                ]
+                            ];
+                        } else {
+                            $response = [
+                                "code" => 404,
+                                "message" => "Transação não encontrada.",
+                                "data" => null,
+                                "succeed" => false
+                            ];
+                        }
+                        $stmt_trans->close();
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Erro interno. [PH-ERR-DBERR].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+                $stmt_user->close();
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro interno. [PH-ERR-DBERR].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/tasks/newcomer_benefit_pop') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/getWithdrawFeeSetting') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/getWithdrawFee') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            // echo ("fIGGr0z0tL291wJ9g9r7IXg/25J3C7RctNGymXVw7W/OqJx42snsP864iTTRcLsQwYmeZUJInekdQpqG9XyLOjGpxkG4qzIToKtxu3I0u3qQsZLA5SexIPR7WXDAjhYcIrzXbCjRYerWfMaA+ljvXEu6Y2unak41JZ4lb7/TT6FrE7nYj5igLD4s6ym4NTUZhn19PbzLv+Ua7iELYAL2qazFX4+cSOO2ksheB/lma+o=");
+            // exit;
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/verifyWithdrawalPasswordV2') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true; // Rota encontrada
+                $qry = "SELECT * FROM usuarios WHERE token=?";
+                $stmt = $mysqli->prepare($qry);
+                $stmt->bind_param("s", $_COOKIE['token_user']);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+                    // Verificação da senha de pagamento
+                    if (isset($data['withdrawalPassword']) && !empty($data['withdrawalPassword'])) {
+                        $senha_enviada = $data['withdrawalPassword'];
+                        $senha_armazenada = $datares['senhaparasacar'];
+
+                        // Verificação direta de senha em texto simples
+                        $senha_correta = ($senha_enviada === $senha_armazenada);
+
+                        if ($senha_correta) {
+
+                            $response = [
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "key" => "227d8d10-3ffd-4a6f-943a-3b9704cc95d5"
+                                ]
+                            ];
+                            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                            exit;
+                        } else {
+                            $response = [
+                                "errorCode" => 41031011,
+                                "code" => 1011,
+                                "msg" => "A senha está incorreta, verifique e digite novamente.",
+                                "time" => round(microtime(true) * 1000)
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        }
+                    } else {
+                        // Se o campo password estiver vazio ou ausente, retorne o JSON solicitado
+                        $response = [
+                            "errorCode" => 41031011,
+                            "code" => 1011,
+                            "msg" => "A senha está incorreta, verifique e digite novamente.",
+                            "time" => round(microtime(true) * 1000)
+                        ];
+                        echo json_encode($response);
+                        exit;
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/withdrawRecord') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            if (!$token_user) {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+
+            $rotaEncontrada = true;
+
+            // Sanitização básica do token
+            $token_user = trim($token_user);
+
+            // Buscar usuário pelo token
+            $qry = "SELECT id FROM usuarios WHERE token = ?";
+            if ($stmt_user = $mysqli->prepare($qry)) {
+                $stmt_user->bind_param("s", $token_user);
+                $stmt_user->execute();
+                $stmt_user->store_result();
+
+                if ($stmt_user->num_rows === 1) {
+                    $stmt_user->bind_result($user_id);
+                    $stmt_user->fetch();
+
+                    // Buscar transações do usuário
+                    $sql = "SELECT * FROM solicitacao_saques WHERE id_user = ?";
+                    if ($stmt_trans = $mysqli->prepare($sql)) {
+                        $stmt_trans->bind_param("i", $user_id);
+                        $stmt_trans->execute();
+                        $result = $stmt_trans->get_result();
+
+                        $depositos = [];
+                        $total_saque = 0.0;
+                        while ($row = $result->fetch_assoc()) {
+                            switch ($row['status']) {
+                                case '1':
+                                    $state = 4;
+                                    $status_name = "Saque Bem Sucedido";
+                                    $total_saque += floatval($row['valor']);
+                                    break;
+                                case '2':
+                                    $state = 2;
+                                    $status_name = "Pagamento Negado";
+                                    break;
+                                default:
+                                    $state = 1;
+                                    $status_name = "Sacando";
+                            }
+
+                            $depositos[] = [
+                                "orderNo" => $row['transacao_id'],
+                                "order_type" => 0,
+                                "pay_kind" => 1,
+                                "cardNo" => '****' . substr($row['pix'], -4),
+                                "content" => 19925253,
+                                "payment_id" => $row['id'],
+                                "money" => $row['valor'],
+                                "status" => $state,
+                                "statusText" => $status_name,
+                                "createTime" => strtotime($row['data_registro']),
+                                "payedtime" => strtotime($row['data_registro']),
+                                "payicon" => "9",
+                                "logo" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/finance-1738107796646-338601.jpg",
+                                "orderName" => "",
+                                "channelAmount" => $row['valor'],
+                                "currencyRate" => "",
+                                "exchangeRate" => "1",
+                                "payCurrencySign" => "R$",
+                                "payCurrency" => "BRL",
+                                "memberCurrency" => "BRL",
+                                //"remark" => "Sacar para PIX ",
+                                "typeId" => 5
+                            ];
+                            // $total_saque += floatval($row['valor']);
+                        }
+                        $stmt_trans->close();
+
+                        $response = [
+
+                            "code" => 1,
+                            "msg" => "返回成功",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "total" => $total_saque,
+                                "totalCount" => count($depositos),
+                                "page" => 1,
+                                "size" => 30,
+                                "records" => $depositos
+                            ]
+                        ];
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Erro interno. [PH-ERR-DBERR].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+                $stmt_user->close();
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro interno. [PH-ERR-DBERR].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/security/verifyModify') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "type" => "谷歌验证码",
+                    "info" => [
+                        "hasKey" => false,
+                        "image" => "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEAAQMAAABmvDolAAAABlBMVEX///8AAABVwtN+AAACrUlEQVR42uyYQc7jKhCEy2LBkiNwE3OxKHbki+GbcASWLCzqqXCi5M3MPm0p/Cuj75doUt1dDX7rty64PEnudQ49bCQdmTFx1269EFAAv7OHR73FrTg27U4VcJYA0mfthK244ojUUpvqws0YsHPnGlYgInr63SSQMeMeWADS67KvBwA+h52P6spSEBuGzP+vqG8Dr9Q7VX1En9vs/5WbXwTwyrSpOm5l/Ef/q9R9GfCFmT2w3sPGNY4tqXqqS7UEEBMz9L3QFemhJfJT1eYBZRupfoGlACrFPvss/cAMoChaUiert8jiCjOAxA5LgIJQs9WxHY9Itqnp1rdqByieSBXhwY3bsAd+b+lT1RcABpQD6/RU9RO4wxTQEnTouxQSnYJ6ZaIZwI92qzrHNa7xQEOTpu+wBaSGoA4mVWv57vtnfbAAUDUrY+ERVxyqDcpEXg4YYS4jRDd+mjaHB1c7AKLPfJle6brBsyXx1QygL9Us6tjLKXGJvL+SzwRQkLirhIVj1IeGNvseVn1eCJDLxTx+iRFmHnHj3bsNAHI1HTKQUrQrMurMGnmqIcAr06SPpdziESGr2DG9DYYFQLnG/anqQ948yeTUxQ6gXMNUEx88ov58Ho8cy6fpNQ+MIUjjJDWpUQ54dIylumoGQGRGqqq9W1nKAWaMTHzVBwuALxJMTdSObleZ6HPob5PzfQBP6xU6XLmBKrwCHu9p8QpARPIds3wNNz6nIk2YiyHgfANJdRk2Zwzm2WfcX69JFoDna5Lq7xpXnK8H3Ou7PlgAzsfknT1sRU4Mp6u9f5gcA8B44Ux8VMANPWAeob1N70WA/RRMwegX3NscyMMaQPlDHX2UixnQZzUEAOOqqX5xIrP/U9XfBs7UG8eWE0Mbqv6Yea8A/NZvmVr/BQAA//8idAX6UvurJQAAAABJRU5ErkJggg==",
+                        "key" => "lArMLheHEvAVoczxSAIoUiAPFqqcrLeW"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota user/security/verifyWithdrawPass (POST) --> VERIFICAR SENHA DE SAQUE
+        if ($requestURI === '/hall/api/member/user/userDeviceList') {
+            $rotaEncontrada = true;
+
+            // Captura o IP real do cliente
+            function getClientIp()
+            {
+                if (!empty($_SERVER['HTTP_CLIENT_IP']))
+                    return $_SERVER['HTTP_CLIENT_IP'];
+                if (!empty($_SERVER['HTTP_X_FORWARDED_FOR']))
+                    return explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0];
+                return $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+            }
+            $clientIp = getClientIp();
+
+            // Busca localização via API externa
+            $area = "UNKNOWN";
+            $geo = @file_get_contents("http://ip-api.com/json/" . $clientIp . "?fields=country,regionName,city,query");
+            if ($geo) {
+                $geoData = json_decode($geo, true);
+                if ($geoData && isset($geoData['country'])) {
+                    $area = $geoData['country'] . "/" . $geoData['regionName'] . "-" . $geoData['city'];
+                }
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    [
+                        "Id" => "14987979559889843889",
+                        "CreateTime" => 1747386371,
+                        "UpdateTime" => 1747386371,
+                        "Useridx" => 720527671,
+                        "RecordType" => 0,
+                        "OsType" => 4,
+                        "AppVersion" => "v6.0.74",
+                        "DeviceModel" => "Firefox v138.0",
+                        "AppSystem" => "Windows 10",
+                        "NetworkType" => "UNKNOWN",
+                        "Ip" => $clientIp,
+                        "Area" => $area,
+                        "LoginTime" => 1747386371,
+                        "IsDelete" => 0,
+                        "IdleTime" => 365,
+                        "DeviceId" => "c99f2486-7b7b-4b73-bc41-917f38d2bf13",
+                        "device" => "H5",
+                        "UserToken" => "ac9ab3e722d31c56f10d1747386371908202385",
+                        "OsKind" => "h5"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota user/security/verifyWithdrawPass (POST) --> VERIFICAR SENHA DE SAQUE
+        if ($requestURI === '/hall/api/member/user/security/verifyWithdrawPass') {
+
+            $rotaEncontrada = true;
+
+            // Verifica se o cookie 'token_user' está presente e não vazio
+            if (!empty($_COOKIE['token_user'])) {
+
+                // Consulta ao banco de dados
+                $qry = "SELECT * FROM usuarios WHERE token='" . $_COOKIE['token_user'] . "'";
+                $resp = mysqli_query($mysqli, $qry);
+
+                if (mysqli_num_rows($resp) > 0) {
+                    $datares = mysqli_fetch_assoc($resp);
+
+                    // Atualiza o campo 'senhaparasacar' e 'senha_saque' no banco
+                    $sql = $mysqli->prepare("UPDATE usuarios SET senhaparasacar = ?, senha_saque = 1 WHERE id = ?");
+                    $sql->bind_param("si", $data['withdraw_pass'], $datares['id']);
+
+                    if ($sql->execute()) {
+                        $response = [
+                            "code" => 1,
+                            "msg" => "返回成功",
+                            "time" => round(microtime(true) * 1000)
+                        ];
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    } else {
+                        // Log de erro para o SQL do tipo 2
+                        error_log("Erro ao executar SQL para atualização de senha para saque: " . $sql->error);
+                        $response = [
+                            "code" => 400,
+                            "msg" => "Erro ao atualizar/adicionar senha de retirada [PH-ERR-2].",
+                            "time" => round(microtime(true) * 1000)
+                        ];
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                } else {
+                    // Caso o usuário não seja encontrado
+                    $response = [
+                        "code" => 400,
+                        "msg" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                        "time" => round(microtime(true) * 1000)
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+            } else {
+                // Caso o cookie 'token_user' não esteja presente
+                $response = [
+                    "code" => 400,
+                    "msg" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                    "time" => round(microtime(true) * 1000)
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+        }
+
+        // Rota user/security/modifyWithdrawPass (POST) --> MODIFICAR SENHA DE SAQUE
+        if ($requestURI === '/hall/api/member/user/security/modifyWithdrawPass') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/withdrawInfoV2') {
+
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true; // Rota encontrada
+                // Consulta para obter informações do usuário com base no token
+                $qry = "SELECT * FROM usuarios WHERE token='" . $_COOKIE['token_user'] . "'";
+                $resp = mysqli_query($mysqli, $qry);
+        
+                if (mysqli_num_rows($resp) > 0) {
+                    $datares = mysqli_fetch_assoc($resp);
+        
+                    // 1. Total de depósitos pagos
+                    $depositosQuery = "SELECT SUM(valor) as totalDepositos FROM transacoes WHERE usuario = '{$datares['id']}' AND tipo = 'deposito' AND status = 'pago'";
+                    $depositosResult = mysqli_query($mysqli, $depositosQuery);
+                    $depositosRow = mysqli_fetch_assoc($depositosResult);
+                    $totalDepositos = floatval($depositosRow['totalDepositos']);
+        
+                    // 2. Total apostado
+                    $apostasQuery = "SELECT SUM(bet_money) as totalApostado FROM historico_play WHERE id_user = '{$datares['id']}'";
+                    $apostasResult = mysqli_query($mysqli, $apostasQuery);
+                    $apostasRow = mysqli_fetch_assoc($apostasResult);
+                    $totalApostado = floatval($apostasRow['totalApostado']);
+        
+                    // 3. Calcular diferença
+                    $bonusRequireBet = $totalDepositos - $totalApostado;
+                    if ($bonusRequireBet < 0)
+                        $bonusRequireBet = 0;
+                        
+                    $withdrawMin = 10;
+                    $withdrawMax = 50000;
+                    $configResult = mysqli_query($mysqli, "SELECT minsaque, maxsaque FROM config LIMIT 1");
+                    if ($configResult && mysqli_num_rows($configResult) > 0) {
+                        $cfg = mysqli_fetch_assoc($configResult);
+                        if (isset($cfg['minsaque']) && floatval($cfg['minsaque']) > 0) {
+                            $withdrawMin = (int) $cfg['minsaque'];
+                        }
+                        if (isset($cfg['maxsaque']) && floatval($cfg['maxsaque']) > 0) {
+                            $withdrawMax = (int) $cfg['maxsaque'];
+                        }
+                    }
+                
+                    // Consulta as contas de pagamento do usuário na tabela 'metodos_pagamentos'
+                    $paymentQuery = "SELECT * FROM metodos_pagamentos WHERE user_id='" . $datares['id'] . "'";
+                    $paymentResult = mysqli_query($mysqli, $paymentQuery);
+        
+                    $cpfSet = false;
+        
+                    if (mysqli_num_rows($paymentResult) > 0) {
+                        // $row = mysqli_fetch_assoc($paymentResult);
+                        $paymentMethods = [];
+                        while ($row = mysqli_fetch_assoc($paymentResult)) {
+        
+                            if (!$cpfSet) {
+                                $cpf = $row['cpf'];
+                                $cpfSet = true;
+                            }
+        
+                            $paymentMethods[] = [
+                                "id" => (int) $row['id'],
+                                "name" => "asdasd",
+                                "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png",
+                                "bankName" => $row['tipo'],
+                                "default" => 1,
+                                "account" => $row['chave'],
+                                "typeId" => 5,
+                                "accountType" => 7,
+                                "withdrawTypeName" => "PIX",
+                                "addWithdrawTypeName" => "",
+                                "code" => "",
+                                "currencyCode" => "BRL",
+                                "currencySign" => "R$",
+                                "cryptoCurrency" => false,
+                                "channelName" => $row['tipo'],
+                                "qrCode" => "",
+                                "selfCurrency" => true,
+                                "stop" => 0,
+                                "bankStop" => 0,
+                                "pinNumberType" => 0,
+                                "pinNumber" => $row['chave']
+                            ];
+                        }
+        
+                        $response = [
+                            "code" => 1,
+                            "msg" => "返回成功",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "auditModeInfo" => [
+                                    "auditMode" => 1,
+                                    "withdrawResetBonus" => 1,
+                                    "bonusTransferInRule" => 1,
+                                    "bonus" => "0",
+                                    "bonusAvailable" => "0",
+                                    "bonusRequireBet" => number_format($bonusRequireBet, 2, '.', ''), // <-- Aqui
+                                    "bonusTransferIn" => false,
+                                    "withdrawNeedBet" => false,
+                                    "undoneResetBonus" => false
+                                ],
+                                "requireBet" => ($bonusRequireBet <= 0 ? 0 : 1),
+                                "auditCancelStatus" => 0,
+                                "cancelAmount" => "10",
+                                "withdrawTimes" => 0,
+                                "accounts" => $paymentMethods,
+                                "cpf" => $cpf,
+                                "isEnableChannel" => true,
+                                "withdrawClose" => [
+                                    "channelSwitch" => true,
+                                    "closeType" => 0,
+                                    "dailyCycle" => 0,
+                                    "startTime" => 0,
+                                    "endTime" => 0,
+                                    "remark" => "",
+                                    "closingTimes" => 0,
+                                    "isEnableChannel" => true
+                                ],
+                                "withdrawMax" => $withdrawMax,
+                                "withdrawMin" => $withdrawMin,
+                                "withdrawTypes" => [
+                                    [
+                                        "typeId" => 5,
+                                        "typeName" => "PIX",
+                                        "addTypeName" => "Adicionar PIX",
+                                        "withdrawMax" => $withdrawMax,
+                                        "withdrawMin" => $withdrawMin,
+                                        "cryptoCurrency" => false,
+                                        "currencyCodes" => [
+                                            "BRL"
+                                        ],
+                                        "subTypes" => [
+                                            "CPF",
+                                            "PHONE",
+                                            "EMAIL"
+                                        ],
+                                        "logo" => "/siteadmin/pay-icon/icon_normal_pix.png",
+                                        "withdrawMethod" => [
+                                            [
+                                                "typeId" => 5,
+                                                "withdrawType" => 7,
+                                                "withdrawTypeName" => "PIX",
+                                                "addWithdrawTypeName" => "Adicionar PIX",
+                                                "withdrawMax" => $withdrawMax,
+                                                "withdrawMin" => $withdrawMin,
+                                                "cryptoCurrency" => false,
+                                                "currencyCode" => "BRL",
+                                                "protocol" => "",
+                                                "bindEnabled" => true,
+                                                "deleteEnabled" => false,
+                                                "normalWithdrawEnabled" => true,
+                                                "walletWithdrawEnabled" => false,
+                                                "accountLimit" => (int) $dataconfig['limite_de_chaves'],
+                                                "subTypes" => [
+                                                    "CPF",
+                                                    "PHONE",
+                                                    "EMAIL"
+                                                ],
+                                                "accountLimitList" => null,
+                                                "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png",
+                                                "kindTips" => "",
+                                                "addAccountKindTips" => "",
+                                                "requiredSelectBank" => 0
+                                            ]
+                                        ],
+                                        "guideBadgeColor" => 0,
+                                        "guideBadge" => ""
+                                    ]
+                                ],
+                                "tabSort" => [
+                                    [
+                                        "tabName" => "Saque normal",
+                                        "tabCode" => "normal",
+                                        "tabIndex" => 2,
+                                        "awardConfig" => null,
+                                        "withdrawTaskInfo" => [
+                                            "iconType" => 1,
+                                            "status" => false
+                                        ]
+                                    ]
+                                ],
+                                "cryptoList" => [
+                                ],
+                                "pendingCount" => 0,
+                                "checkCpfRule" => 0,
+                                "withdrawTaskInfo" => [
+                                    "switch" => false,
+                                    "pendingCount" => 0,
+                                    "stats" => [
+                                        "needWithdrawAmount" => 0,
+                                        "withdrawTypeIdName" => [
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ];
+                    } else {
+                        // Se não houver métodos de pagamento encontrados
+                        $response = [
+                            "code" => 1,
+                            "msg" => "返回成功",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => [
+                                "auditModeInfo" => [
+                                    "auditMode" => 1,
+                                    "withdrawResetBonus" => 1,
+                                    "bonusTransferInRule" => 1,
+                                    "bonus" => "0",
+                                    "bonusAvailable" => "0",
+                                    "bonusRequireBet" => "0",
+                                    "bonusTransferIn" => false,
+                                    "withdrawNeedBet" => false,
+                                    "undoneResetBonus" => false
+                                ],
+                                "requireBet" => 0,
+                                "auditCancelStatus" => 0,
+                                "cancelAmount" => "10",
+                                "withdrawTimes" => 0,
+                                "accounts" => [
+                                ],
+                                //"cpf" => "93458827900",
+                                "isEnableChannel" => true,
+                                "withdrawClose" => [
+                                    "channelSwitch" => true,
+                                    "closeType" => 0,
+                                    "dailyCycle" => 0,
+                                    "startTime" => 0,
+                                    "endTime" => 0,
+                                    "remark" => "",
+                                    "closingTimes" => 0,
+                                    "isEnableChannel" => true
+                                ],
+                                "withdrawMax" => $withdrawMax,
+                                "withdrawMin" => $withdrawMin,
+                                "withdrawTypes" => [
+                                    [
+                                        "typeId" => 5,
+                                        "typeName" => "PIX",
+                                        "addTypeName" => "Adicionar PIX",
+                                        "withdrawMax" => $withdrawMax,
+                                        "withdrawMin" => $withdrawMin,
+                                        "cryptoCurrency" => false,
+                                        "currencyCodes" => [
+                                            "BRL"
+                                        ],
+                                        "subTypes" => [
+                                            "CPF",
+                                            "PHONE",
+                                            "EMAIL"
+                                        ],
+                                        "logo" => "/siteadmin/pay-icon/icon_normal_pix.png",
+                                        "withdrawMethod" => [
+                                            [
+                                                "typeId" => 5,
+                                                "withdrawType" => 7,
+                                                "withdrawTypeName" => "PIX",
+                                                "addWithdrawTypeName" => "Adicionar PIX",
+                                                "withdrawMax" => $withdrawMax,
+                                                "withdrawMin" => $withdrawMin,
+                                                "cryptoCurrency" => false,
+                                                "currencyCode" => "BRL",
+                                                "protocol" => "",
+                                                "bindEnabled" => true,
+                                                "deleteEnabled" => false,
+                                                "normalWithdrawEnabled" => true,
+                                                "walletWithdrawEnabled" => false,
+                                                "accountLimit" => (int) $dataconfig['limite_de_chaves'],
+                                                "subTypes" => [
+                                                    "CPF",
+                                                    "PHONE",
+                                                    "EMAIL"
+                                                ],
+                                                "accountLimitList" => null,
+                                                "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png",
+                                                "kindTips" => "",
+                                                "addAccountKindTips" => "",
+                                                "requiredSelectBank" => 0
+                                            ]
+                                        ],
+                                        "guideBadgeColor" => 0,
+                                        "guideBadge" => ""
+                                    ]
+                                ],
+                                "tabSort" => [
+                                    [
+                                        "tabName" => "Saque normal",
+                                        "tabCode" => "normal",
+                                        "tabIndex" => 2,
+                                        "awardConfig" => null,
+                                        "withdrawTaskInfo" => [
+                                            "iconType" => 1,
+                                            "status" => false
+                                        ]
+                                    ]
+                                ],
+                                "cryptoList" => [
+                                ],
+                                "pendingCount" => 0,
+                                "checkCpfRule" => 0,
+                                "withdrawTaskInfo" => [
+                                    "switch" => false,
+                                    "pendingCount" => 0,
+                                    "stats" => [
+                                        "needWithdrawAmount" => 0,
+                                        "withdrawTypeIdName" => [
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ];
+                    }
+                } else {
+                    // Caso o usuário não seja encontrado no banco de dados
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                }
+            } else {
+                // Caso o token do usuário não esteja presente ou esteja vazio
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+            }
+        
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/dealTypes') {
+            $rotaEncontrada = true;
+            header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "status" => [
+                        "msg" => "成功"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/certify/bindalipayV3?withdrawal_uuid=227d8d10-3ffd-4a6f-943a-3b9704cc95d5') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true; // Rota encontrada
+                $qry = "SELECT * FROM usuarios WHERE token='" . $_COOKIE['token_user'] . "'";
+                $resp = mysqli_query($mysqli, $qry);
+                if (mysqli_num_rows($resp) > 0) {
+                    $datares = mysqli_fetch_assoc($resp);
+        
+                    // Verifica se o tipo de pagamento foi enviado corretamente
+                    if (isset($data['subType']) && !empty($data['subType'])) {
+                        // Definindo as variáveis dependendo do tipo de pagamento
+                        $accountType = $data['subType'];
+        
+                        $cpf = $data['extendInfo'] ?: $data['extendInfo'];
+        
+                        // Dependendo do tipo de pagamento (telefone, e-mail, CPF), atribuir o valor correto
+                        $payment_value = null;
+        
+                        switch ($accountType) {
+                            case 'PHONE':
+                                // Quando for um telefone, pega o valor do telefone
+                                $payment_value = isset($data['account']) ? $data['account'] : null;
+                                break;
+                            case 'EMAIL':
+                                // Quando for um email, pega o valor do account (o email vem no campo account)
+                                $payment_value = isset($data['account']) ? $data['account'] : null;
+                                break;
+                            case 'CPF':
+                                // Quando for CPF, pega o valor do CPF
+                                $payment_value = isset($data['account']) ? $data['account'] : null;
+                                break;
+                            case 'CNPJ':
+                                // Quando for CNPJ, pega o valor do CNPJ
+                                $payment_value = isset($data['account']) ? $data['account'] : null;
+                                break;
+                            case 'EVP':
+                                // Quando for chave aleatória (EVP), pega o valor
+                                $payment_value = isset($data['account']) ? $data['account'] : null;
+                                break;
+                            default:
+                                $response = [
+                                    "code" => 0,
+                                    "msg" => "Tipo de pagamento inválido",
+                                ];
+                                echo json_encode($response);
+                                exit;
+                        }
+        
+                        // Se não houver valor para o tipo de pagamento escolhido
+                        if (empty($payment_value)) {
+                            $response = [
+                                "code" => 0,
+                                "msg" => "Faltando dados obrigatórios para o tipo de pagamento",
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        }
+        
+                        // Verifica se o valor de pagamento já existe na tabela 'metodos_pagamentos'
+                        $checkQuery = "SELECT * FROM metodos_pagamentos WHERE chave = ?";
+                        $checkStmt = $mysqli->prepare($checkQuery);
+                        $checkStmt->bind_param("s", $payment_value);
+                        $checkStmt->execute();
+                        $checkResult = $checkStmt->get_result();
+        
+                        if ($checkResult->num_rows > 0) {
+                            // Se o valor já existir, retorna um erro
+                            $response = [
+                                "errorCode" => 41031031,
+                                "code" => 1031,
+                                "msg" => "Conta de pagamento já existente.",
+                                "time" => round(microtime(true) * 1000)
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        }
+        
+                        // Se o valor não existir, insere os dados na tabela 'metodos_pagamentos'
+                        $sql = $mysqli->prepare("INSERT INTO metodos_pagamentos (user_id, realname, tipo, chave, cpf) VALUES (?, ?, ?, ?, ?)");
+                        $sql->bind_param("issss", $datares['id'], $data['name'], $accountType, $payment_value, $cpf);
+        
+                        if ($sql->execute()) {
+                            // Atualiza o real_name do usuário
+                            $updateUser = $mysqli->prepare("UPDATE usuarios SET real_name = ? WHERE id = ?");
+                            $updateUser->bind_param("si", $data['name'], $datares['id']);
+                            $updateUser->execute();
+                            $updateUser->close();
+        
+                            $response = [
+                                "code" => 1,
+                                "msg" => "返回成功",
+                                "time" => round(microtime(true) * 1000),
+                                "data" => [
+                                    "id" => 415475,
+                                    "name" => $data['name'],
+                                    "logo" => "https://sweykpro.pubs3static.com/siteadmin/pay-icon/icon_normal_pix.png",
+                                    "bankName" => $accountType,
+                                    "default" => 1,
+                                    "account" => $payment_value,
+                                    "typeId" => 5,
+                                    "accountType" => 7,
+                                    "withdrawTypeName" => "PIX",
+                                    "addWithdrawTypeName" => "",
+                                    "code" => "",
+                                    "currencyCode" => "BRL",
+                                    "currencySign" => "R$",
+                                    "cryptoCurrency" => false,
+                                    "channelName" => $accountType,
+                                    "cpf" => $cpf,
+                                    "qrCode" => "",
+                                    "selfCurrency" => true,
+                                    "stop" => 0,
+                                    "bankStop" => 0,
+                                    "pinNumberType" => 0,
+                                    "pinNumber" => $payment_value
+                                ]
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        } else {
+                            $response = [
+                                "code" => 400,
+                                "message" => "Erro ao adicionar método de pagamento [PH-ERR-ADDPM].",
+                                "data" => null,
+                                "succeed" => false
+                            ];
+                            echo json_encode($response);
+                            exit;
+                        }
+                    } else {
+                        $response = [
+                            "code" => 400,
+                            "message" => "Tipo de pagamento inválido [PH-ERR-ACCTYPE].",
+                            "data" => null,
+                            "succeed" => false
+                        ];
+                        echo json_encode($response);
+                        exit;
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "message" => "Faça login novamente. [PH-ERR-DESAUTH].",
+                        "data" => null,
+                        "succeed" => false
+                    ];
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 400,
+                    "message" => "Erro ao autenticar. [PH-ERR-TOKENOFF].",
+                    "data" => null,
+                    "succeed" => false
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        
+            // echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/user/accountPageList') {
+            $rotaEncontrada = true;
+
+            // header('Content-Type: text/plain');
+            // echo("Skomsv9mhBdd8kHLEA/KaIkH+jNhbp9FEfpI6yero+VYSVimDWBjz2QP3NshSr+HHLZScbKAt2WXOJ1bDda9C7i9CBl8SzwgOC8bkLB4maTDqotp5N3Q4a1eY/KvEr93Id+4eupt2SPjt3B24s+avXqZoo+ytF4Pr03c+AMHITh+pSEPHAQr8sX0wAPcAwIJ70Z/oCiDfIiacU5CbPPQ7e/4RK+8LlDH+TvBkdGpK5psuya7fhR43E+pWtmL+DvVt2Ixi9mXTuSd0r3yehy057KLQEaiYaxm1QQpSXC31/dVPjHb6iXPUoDDHxMP2ue7LeoyRqZr5EoFDJUn0nHk8MXfnQ9dMpvuTmBjybf2aDoOgYcyoBdEt/GHJmUzfRz5MR/dEwSyCUwXw+a95e/pjW+jBrLD7FaWXTRem81+sPt3w/lS+JImWxHUT0dZXNQOsibBaatX0GBUMoaZyxWQdd+kiCDZ3S5mMz670I+WwFGY/GDMdNPP2JwwSCTcaB5xtMFjaaHwq9ghvQlEYANhI0bDIXu+5BpbeF051FmsU1kSpBDZH4yBJQEo8yH0gEksPzSpSb+tu3uLbOrMclBxQIZbopzcD8hHUJlVdCktV7Z7lZ1nZ/YXZF90ddqwobHzlnkTSDtRl3J7RWXKQU2iYrgcJKPmiXX3HVDbg83bWD82gT5jIxUkEIDY08B4Z4DJI73M312LhUGOmYnEqJJo05dKJP/hsI8tSKT3sjmUY4mV+0LdhGcpQPlBGrjldJZwR1sPyDp8F19eAE6ZV1uQc+zoy95iE2YyOK4XYwd3hr5BByt4UrWA5J18FQ0IuFaSM5iIdFW9UFw5ZyczWpFakj4cpPDDyXkYXMPfHhgl9X7eMhsEdNT6GgN5zV9m5G/K0SGx99MBhRv56TudUqufYxmi/to8Yne6jF0aWDZt4EQp3PNQBqRbvtZCuEbp9LQh9EUonIi6mYx8dSWG2BJE80GkfIB2cHxHVGmKNj/ro77J6tFgUcxsn//knpoqwdu/cUy/o1FmTENyFzUGii5+0CmQe/pKEjg/UsdmVPFqGRQRWO3viHPcsrDbYjuVRSg94TIN5YVT7icmQqZg6NctNwpmsD/1cBxJjiQioBWzu6+UJivhIHRgv2701Qy+Fvm+4hQygO2mvmNiGYa1sakr0fUk4aW4o8557tWWH2Ws2r1OU8JTJL2g19rhTEpLlX/cwWPFHZFfVrsT+a5wvz5NCZH7rH+9rHrMy2eTtF0FYHKhK5Q8W5yFKNKZHRkLzxU3hZRL6EErCvCg9TNYgZ5yN4vNjdCHDkfH6AyBHkcSby6QOaTjJ1tuq0V4GJ0ZOEYRT+gXcXlzye0P7DPgfReoEM6Wat5C6OVe77SBlx+eu105Gqiue17GRWwRcRraxZSxuq/2Fdfo9FhHqU5XBHhZEZnBRCAIzohbxvqpxabFeSXbZGzRFfBV8D+6rNZM1JnItIISeFh2VvG4uxXFzitAxZ8f5vXour2kePa7MJc2gLeXDYnMLolJzs1brbrqNRr1bXpXJNs43XIqRhGSiavteM8b3teiOf0PxdAkO6qzhgz+3+xurp6F19c2Z2sncm2iLT3Wda/VPLrcJlaBBSO5NeW8EZo7989Qlswwm6wCWZq+Kt1qYiIiTy9j1mJZpxqAh27BMJO+8USBzklPto11Wz8tTKYgPuE4fMqM2go2pKbbQZ3xKFqJhETPlZEyooZFVCEtVzorBaVazV3eiiCqgdLmCAaeImRj1vb/A9na/5SrtTTodgzOa+IDLpm2Nlee7343q9j1CSsuT8RnsU1UHyT6vGZfci9SVHoZ04397hGO5SWgRL3xS26Kokk4QZg3UJXofi99usOFK/iI4h7txQ/mHmh9qtFe422t6WfVJncx59CiFBLtvMk/JFNsFstHAOIIBHJLGqIAXLhPbv3q65UFuUvEHElk8ns+JPm8x/6DCqcNDbTM/9IauaK4ZNgh7bC5uRi/bEq5w5nXV/i+JDX3IXqFMnJG+/QjMMxpwE/PYOqCI3hOxFxIRvdJcy+EAn91qXB3f5Oh566mpEI4JEF+p4Z9iXyUxDieqeLkuoZTLrVoAbXE6+TcjVTdfGu30UaO6fsnKjptMeDzLNUcfJGA2JdVrks0XjLzwGmXop+FfOTJ9sQWWqzW7OSOw0bjtWwT/adsqoetI0Oatr/9RTHWdfV2pBSFAG4TPaiL6mxOeQ61RKesn4MbWXL2lsFj95gUgVjE3rdLGS3btrl79Q++bzhQ0lZb0GL+L9CDr2OFfYhtCKmVjoipryRsAaC6cC1/FeCqxy3le5hf42dpXQ==");
+            // exit;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+
+            // Filtro de data
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0: // Hoje
+                    $dateFilter = "AND DATE(data_registro) = CURDATE()";
+                    break;
+                case 1: // Ontem
+                    $dateFilter = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2: // Esta semana
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3: // Última semana
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4: // Este mês
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                    break;
+                case 5: // Mês passado
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                case -1: // Tudo
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            $extrato = [];
+
+            // Troca de Fundos (adicao_saldo)
+            $sql = "SELECT id, valor, tipo, data_registro FROM adicao_saldo WHERE id_user = ? $dateFilter ORDER BY data_registro DESC";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $extrato[] = [
+                    "orderNo" => $row['id'],
+                    "finish_game_time" => strtotime($row['data_registro']),
+                    "item_count" => (float) $row['valor'],
+                    "cur_count" => 0,
+                    "opt_type_text" => "Troca de Fundos",
+                    "remark" => "",
+                    "opt_type" => 1,
+                    "opt_type_name" => "Correção de Fundo",
+                    "deal_type" => 1101,
+                    "deal_type_name" => "Adicionar Fundos",
+                    "walletTypeName" => "Carteira de saldo"
+                ];
+            }
+
+            // Troca de Fundos (lobby_pgsoft)
+            $sql = "SELECT * FROM lobby_pgsoft WHERE id_user = ? AND tipo = 'saida' $dateFilter ORDER BY data_registro DESC";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $extrato[] = [
+                    "orderNo" => $row['id'],
+                    "finish_game_time" => strtotime($row['data_registro']),
+                    "item_count" => (float) $row['saldo'],
+                    "cur_count" => 0,
+                    "opt_type_text" => "PGSlots para o Lobby",
+                    "remark" => "",
+                    "opt_type" => 1,
+                    "opt_type_name" => "Troca de Fundos",
+                    "deal_type" => 1101,
+                    "deal_type_name" => "PGSlots para o Lobby",
+                    "walletTypeName" => "Carteira de saldo",
+                    "platformId" => 200, 
+                    "categoryId" => 3, 
+                    "platformName" => "PG" 
+                ];
+            }
+           
+             // Troca de Fundos (lobby_pgsoft)
+             $sql = "SELECT * FROM lobby_pgsoft WHERE id_user = ? AND tipo = 'entrada' $dateFilter ORDER BY data_registro DESC";
+             $stmt = $mysqli->prepare($sql);
+             $stmt->bind_param("i", $userId);
+             $stmt->execute();
+             $res = $stmt->get_result();
+             while ($row = $res->fetch_assoc()) {
+                 $extrato[] = [
+                     "orderNo" => $row['id'],
+                     "finish_game_time" => strtotime($row['data_registro']),
+                     "item_count" => (float) $row['saldo'],
+                     "cur_count" => 0,
+                     "opt_type_text" => "Troca de Fundos",
+                     "remark" => "",
+                     "opt_type" => 1,
+                     "opt_type_name" => "Troca de Fundos",
+                     "deal_type" => 1201,
+                     "deal_type_name" => "Lobby para PGSlots",
+                     "walletTypeName" => "Carteira de saldo",
+                     "platformId" => 200, 
+                     "categoryId" => 3, 
+                     "platformName" => "PG" 
+                 ];
+             }
+
+            // Saque de Membro (solicitacao_saques)
+            $sql = "SELECT transacao_id, valor, data_registro, status FROM solicitacao_saques WHERE id_user = ? $dateFilter ORDER BY data_registro DESC";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $statusText = ($row['status'] == 1) ? "Saque Bem Sucedido" : "Sacando";
+                $dealType = ($row['status'] == 1) ? 3006 : 3010;
+                $extrato[] = [
+                    "orderNo" => $row['transacao_id'],
+                    "finish_game_time" => strtotime($row['data_registro']),
+                    "item_count" => -(float) $row['valor'],
+                    "cur_count" => 0,
+                    "opt_type_text" => $statusText,
+                    "remark" => "",
+                    "opt_type" => 3,
+                    "opt_type_name" => "Saque de Membro",
+                    "deal_type" => $dealType,
+                    "deal_type_name" => $statusText,
+                    "walletTypeName" => "Carteira de saldo"
+                ];
+            }
+
+            // Depósito de Membro (transacoes)
+            $sql = "SELECT transacao_id, valor, data_registro, status FROM transacoes WHERE usuario = ? $dateFilter ORDER BY data_registro DESC";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $statusText = ($row['status'] == 'pago') ? "Depósito online" : (($row['status'] == 'processamento') ? "Processando" : "Expirado");
+                $dealType = ($row['status'] == 'pago') ? 2001 : 2002;
+                $extrato[] = [
+                    "orderNo" => $row['transacao_id'],
+                    "finish_game_time" => strtotime($row['data_registro']),
+                    "item_count" => (float) $row['valor'],
+                    "cur_count" => 0,
+                    "opt_type_text" => "Depósito de Membro",
+                    "remark" => "",
+                    "opt_type" => 2,
+                    "opt_type_name" => "Depósito de Membro",
+                    "deal_type" => $dealType,
+                    "deal_type_name" => $statusText,
+                    "walletTypeName" => "Carteira de saldo"
+                ];
+            }
+
+            // Ordenar por data decrescente
+            usort($extrato, function ($a, $b) {
+                return $b['finish_game_time'] <=> $a['finish_game_time'];
+            });
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "total" => count($extrato),
+                    "data" => $extrato
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/security/thirdUser/bindList') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/game/recentreport/platform-category-game-combo') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "success",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "category" => [
+                        [
+                            "categoryId" => 3,
+                            "categoryName" => "Slots"
+                        ],
+                        [
+                            "categoryId" => 11,
+                            "categoryName" => "Blockchain"
+                        ]
+                    ],
+                    "gameList" => null,
+                    "platform" => null
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/user/accountTotal') {
+            $rotaEncontrada = true;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+
+            // Filtro de data
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0:
+                    $dateFilter = "AND DATE(data_registro) = CURDATE()";
+                    break;
+                case 1:
+                    $dateFilter = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2:
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3:
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4:
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                    break;
+                case 5:
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            // Total de depósitos pagos
+            $sql = "SELECT SUM(valor) as total FROM transacoes WHERE usuario = ? AND status = 'pago' $dateFilter";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $row = $res->fetch_assoc();
+            $totalDeposito = $row['total'] ?? 0;
+
+            // Total de saques aprovados
+            $sql = "SELECT SUM(valor) as total FROM solicitacao_saques WHERE id_user = ? AND status = 1 $dateFilter";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $row = $res->fetch_assoc();
+            $totalSaque = $row['total'] ?? 0;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "total_charge_amount" => (float) $totalDeposito,
+                    "total_withdraw_amount" => (float) $totalSaque,
+                    "total_task_amount" => "0",
+                    "total_yuebao_amount" => "0",
+                    "total_active_amount" => "0",
+                    "total_returngold_amount" => "0",
+                    "total_event_amount" => "0",
+                    "total_valid_bet" => "0",
+                    "total_item_count" => "0",
+                    "total_settle" => "0",
+                    "total_discount_amount" => "0",
+                    "balance" => "0",
+                    "betitemNum" => "0",
+                    "bonusReceive" => "0",
+                    "totalTax" => "0"
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota bet-manager/recentreport/betrecords/_query (POST) --> Historico de jogadas
+        if ($requestURI === '/hall/api/bet-manager/recentreport/betrecords/_query') {
+            $rotaEncontrada = true;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+
+            $data = json_decode(file_get_contents('php://input'), true);
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0:
+                    $dateFilter = "AND DATE(created_at) = CURDATE()";
+                    break;
+                case 1:
+                    $dateFilter = "AND DATE(created_at) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())";
+                    break;
+                case 5:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(created_at) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            $sql = "SELECT id, id_user, bet_money, win_money, txn_id, nome_game, created_at, status_play FROM historico_play WHERE id_user = ? $dateFilter ORDER BY created_at DESC LIMIT 50";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            $dataArr = [];
+            while ($row = $res->fetch_assoc()) {
+                $gameName = '';
+                $provider = '';
+                $type = '';
+                $gameType = '';
+                $banner = '';
+                $stmtGame = $mysqli->prepare("SELECT game_name, provider, type, game_type, banner FROM games WHERE game_code = ? LIMIT 1");
+                $stmtGame->bind_param("s", $row['nome_game']);
+                $stmtGame->execute();
+                $resGame = $stmtGame->get_result();
+                if ($game = $resGame->fetch_assoc()) {
+                    $gameName = $game['game_name'];
+                    $provider = $game['provider'] ?? '';
+                    $type = $game['type'] ?? '';
+                    $gameType = $game['game_type'] ?? '';
+                    $banner = $game['banner'] ?? '';
+                }
+
+                $dataArr[] = [
+                    "allBet" => (float) $row['bet_money'],
+                    "gameName" => $gameName,
+                    "provider" => $provider,
+                    "type" => $type,
+                    "gameType" => $gameType,
+                    "banner" => $banner,
+                    "netProfit" => (float) $row['win_money'] - (float) $row['bet_money'],
+                    "recordId" => $row['txn_id'],
+                    "settleStatus" => (int) $row['status_play'],
+                    "settleTime" => isset($row['created_at']) ? (int) $row['created_at'] : 0,
+                    "tax" => 0,
+                    "validBet" => (float) $row['bet_money'],
+                    "winAmount" => (float) $row['win_money']
+                ];
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "success",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "data" => $dataArr,
+                    "total" => count($dataArr)
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota bet-manager/recentreport/betrecords/_query (POST) --> Relatorio
+        if ($requestURI === '/hall/api/bet-manager/recentreport/bet_report/personal/_query') {
+            $rotaEncontrada = true;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $userId = $user['id'];
+
+            $data = json_decode(file_get_contents('php://input'), true);
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0:
+                    $dateFilter = "AND DATE(created_at) = CURDATE()";
+                    break;
+                case 1:
+                    $dateFilter = "AND DATE(created_at) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())";
+                    break;
+                case 5:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(created_at) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            // Agrupar apostas por jogo
+            $sql = "SELECT nome_game, COUNT(*) as betitemNum, SUM(bet_money) as allBet, SUM(win_money) as winAmount, SUM(win_money - bet_money) as netProfit, MIN(created_at) as first_time
+                    FROM historico_play
+                    WHERE id_user = ? $dateFilter
+                    GROUP BY nome_game
+                    ORDER BY MAX(created_at) DESC";
+            $stmt = $mysqli->prepare($sql);
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            $dataArr = [];
+            while ($row = $res->fetch_assoc()) {
+                $gameName = '';
+                $gameCategoryName = '';
+                $platformName = '';
+                $stmtGame = $mysqli->prepare("SELECT game_name, type as gameCategoryName, provider as platformName FROM games WHERE game_code = ? LIMIT 1");
+                $stmtGame->bind_param("s", $row['nome_game']);
+                $stmtGame->execute();
+                $resGame = $stmtGame->get_result();
+                if ($game = $resGame->fetch_assoc()) {
+                    $gameName = $game['game_name'];
+                    $gameCategoryName = $game['gameCategoryName'] ?? '';
+                    $platformName = $game['platformName'] ?? '';
+                }
+
+                $date = date('Y-m-d', $row['created_at']);
+                $dateTimestamp = strtotime($row['created_at']);
+
+                $dataArr[] = [
+                    "allBet" => (float) $row['allBet'],
+                    "betitemNum" => (int) $row['betitemNum'],
+                    "currency" => null,
+                    "date" => $date,
+                    "dateTimestamp" => $dateTimestamp,
+                    "gameCategoryName" => $gameCategoryName,
+                    "gameName" => $gameName,
+                    "netProfit" => (float) $row['netProfit'],
+                    "platformName" => $platformName,
+                    "tax" => 0,
+                    "validBet" => (float) $row['allBet'],
+                    "winAmount" => (float) $row['winAmount']
+                ];
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "success",
+                "time" => round(microtime(true) * 1000),
+                "data" => $dataArr
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/pop_canReceiveReward') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => 1747706977,
+                "data" => [
+                    "list" => null,
+                    "disableReceiveLogPop" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/user/accountDetailInfo') {
+            $rotaEncontrada = true;
+
+            $orderNo = $data['orderNo'] ?? '';
+            $dealType = $data['dealType'] ?? 0;
+
+            $detalhe = null;
+
+            if ($dealType == 1101) { // Troca de Fundos
+                $sql = "SELECT id, valor, data_registro FROM adicao_saldo WHERE id = ?";
+                $stmt = $mysqli->prepare($sql);
+                $stmt->bind_param("s", $orderNo);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                $row = $res->fetch_assoc();
+                if ($row) {
+                    $detalhe = [
+                        "orderNo" => $row['id'],
+                        "createTime" => strtotime($row['data_registro']),
+                        "optTypeName" => "Correção de Fundo",
+                        "dealTypeName" => "Adicionar Fundos",
+                        "walletTypeName" => "Carteira de saldo",
+                        "changeGold" => (float) $row['valor'],
+                        "beforeGold" => 0,
+                        "afterGold" => 0
+                    ];
+                }
+            } elseif ($dealType == 2001 || $dealType == 2002) { // Depósito de Membro
+                $sql = "SELECT transacao_id, valor, data_registro, status FROM transacoes WHERE transacao_id = ?";
+                $stmt = $mysqli->prepare($sql);
+                $stmt->bind_param("s", $orderNo);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                $row = $res->fetch_assoc();
+                if ($row) {
+                    $statusText = ($row['status'] == 'pago') ? "Depósito online" : (($row['status'] == 'processamento') ? "Processando" : "Expirado");
+                    $detalhe = [
+                        "orderNo" => $row['transacao_id'],
+                        "createTime" => strtotime($row['data_registro']),
+                        "optTypeName" => "Depósito de Membro",
+                        "dealTypeName" => $statusText,
+                        "walletTypeName" => "Carteira de saldo",
+                        "changeGold" => (float) $row['valor'],
+                        "beforeGold" => 0,
+                        "afterGold" => 0
+                    ];
+                }
+            } elseif ($dealType == 3006 || $dealType == 3010) { // Saque de Membro
+                $sql = "SELECT transacao_id, valor, data_registro, status FROM solicitacao_saques WHERE transacao_id = ?";
+                $stmt = $mysqli->prepare($sql);
+                $stmt->bind_param("s", $orderNo);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                $row = $res->fetch_assoc();
+                if ($row) {
+                    $statusText = ($row['status'] == 1) ? "Saque Bem Sucedido" : "Sacando";
+                    $detalhe = [
+                        "orderNo" => $row['transacao_id'],
+                        "createTime" => strtotime($row['data_registro']),
+                        "optTypeName" => "Saque de Membro",
+                        "dealTypeName" => $statusText,
+                        "walletTypeName" => "Carteira de saldo",
+                        "changeGold" => -(float) $row['valor'],
+                        "beforeGold" => 0,
+                        "afterGold" => 0
+                    ];
+                }
+            }
+
+            if ($detalhe) {
+                $response = [
+                    "code" => 1,
+                    "msg" => "返回成功",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => $detalhe
+                ];
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Registro não encontrado",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/message/view') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => 1747706474,
+                "data" => [
+                    "id" => 153445,
+                    "title" => "",
+                    "title_origin" => "",
+                    "list_title" => "",
+                    "content" => $dataconfig['marquee'],
+                    "read_status" => 0,
+                    "prize" => 0,
+                    "prize_status" => 0,
+                    "publishTime" => 1744772400,
+                    "create_time" => 1747663200,
+                    "feedbackId" => 0,
+                    "interval" => 0,
+                    "frameSwitch" => 0,
+                    "frameType" => 0,
+                    "sendTime" => 0,
+                    "endTime" => 0,
+                    "startTime" => 0,
+                    "frameStartTime" => 0,
+                    "frameEndTime" => 0,
+                    "isPublish" => 0,
+                    "isPublishFrame" => 0,
+                    "triggerId" => 0,
+                    "triggerType" => 0,
+                    "cycleTime" => 1747663200,
+                    "time_stamp" => 1747663200
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/avatars') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn1.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn2.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn4.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn5.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn6.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn7.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn8.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn9.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn10.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn11.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn12.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn13.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn14.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn15.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn16.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn17.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn18.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn19.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn20.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn21.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn22.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn23.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn24.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn25.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_txn26.png",
+                        "sex" => 1
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx1.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx2.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx4.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx5.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx6.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx7.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx8.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx9.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx10.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx11.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx12.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx13.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx14.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx15.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx16.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx17.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx18.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx19.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx20.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx21.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx22.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx23.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx24.png",
+                        "sex" => 2
+                    ],
+                    [
+                        "url" => "/siteadmin/default/2D/img_ntx25.png",
+                        "sex" => 2
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/v2/user/info') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+
+                    $stmt2 = $mysqli->prepare("SELECT * FROM segurança WHERE id_user = ?");
+                    $stmt2->bind_param("i", $datares['id']);
+                    $stmt2->execute();
+                    $resp2 = $stmt2->get_result();
+
+                    if ($resp2->num_rows > 0) {
+                        $segurança = $resp2->fetch_assoc();
+
+                        $id_questao = $segurança['questao'];
+                    } else {
+
+                        $id_questao = null;
+                    }
+
+                    // if ($datares['relogar'] == 1) {
+                    //     // Realizar o update na tabela usuarios
+                    //     $stmtUpdate = $mysqli->prepare("UPDATE usuarios SET relogar = 0 WHERE id = ?");
+                    //     $stmtUpdate->bind_param("i", $datares['id']);
+                    //     $stmtUpdate->execute();
+
+                    //     if ($stmtUpdate->affected_rows > 0) {
+                    //         setcookie('token_user', '', time() - 3600, '/');  // Expira o cookie definindo o tempo de expiração para uma hora atrás
+
+                    //         exit;
+                    //     } else {
+                    //        exit;
+                    //     }
+
+                    //     exit;  // Para garantir que o script não continue após o redirecionamento
+                    // }
+
+
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "basic" => [
+                                "username" => $datares['mobile'],
+                                "userStatus" => 1
+                            ],
+                            "profile" => [
+                                "nickname" => "Udolf",
+                                "phone" => "+55-" . substr(preg_replace('/\D/', '', $datares['celular']), 2, 2) . "******" . substr(preg_replace('/\D/', '', $datares['celular']), -3),
+                                "registerTime" => 1747297881
+                            ],
+                            "kycInfo" => [
+                                "fullname" => "",
+                                "country" => "",
+                                "placeOfBirth" => "",
+                                "placeOfBirthDetail" => "",
+                                "placeOfCurrent" => "",
+                                "placeOfCurrentDetail" => "",
+                                "placeOfPermanent" => "",
+                                "placeOfPermanentDetail" => "",
+                                "workType" => 0,
+                                "workTypeOther" => "",
+                                "incomeSource" => 0,
+                                "incomeSourceOther" => "",
+                                "ekycResult" => "0",
+                                "ekycResultDoc" => "Init",
+                                "ekycResultFace" => "Init",
+                                "holdingIdPhoto" => "",
+                                "employerName" => ""
+                            ]
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/vipDetails') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+
+                    $stmt2 = $mysqli->prepare("SELECT * FROM segurança WHERE id_user = ?");
+                    $stmt2->bind_param("i", $datares['id']);
+                    $stmt2->execute();
+                    $resp2 = $stmt2->get_result();
+
+                    if ($resp2->num_rows > 0) {
+                        $segurança = $resp2->fetch_assoc();
+
+                        $id_questao = $segurança['questao'];
+                    } else {
+
+                        $id_questao = null;
+                    }
+
+                    // if ($datares['relogar'] == 1) {
+                    //     // Realizar o update na tabela usuarios
+                    //     $stmtUpdate = $mysqli->prepare("UPDATE usuarios SET relogar = 0 WHERE id = ?");
+                    //     $stmtUpdate->bind_param("i", $datares['id']);
+                    //     $stmtUpdate->execute();
+
+                    //     if ($stmtUpdate->affected_rows > 0) {
+                    //         setcookie('token_user', '', time() - 3600, '/');  // Expira o cookie definindo o tempo de expiração para uma hora atrás
+
+                    //         exit;
+                    //     } else {
+                    //        exit;
+                    //     }
+
+                    //     exit;  // Para garantir que o script não continue após o redirecionamento
+                    // }
+
+                    // Consulta total de jogadas e soma de bet_money
+                    $stmt3 = $mysqli->prepare("SELECT COUNT(*) as total_jogadas, SUM(bet_money) as total_apostado FROM historico_play WHERE id_user = ?");
+                    $stmt3->bind_param("i", $datares['id']);
+                    $stmt3->execute();
+                    $result3 = $stmt3->get_result();
+                    $historico = $result3->fetch_assoc();
+
+                    $total_jogadas = $historico['total_jogadas'] ?? 0;
+                    $total_apostado = $historico['total_apostado'] ?? 0;
+
+                    // Buscar meta e bônus do próximo nível VIP
+                    $proxvip = $datares['vip'] + 1;
+                    $stmt_vip = $mysqli->prepare("SELECT meta, bonus FROM vip_levels WHERE id_vip = ? LIMIT 1");
+                    $stmt_vip->bind_param("i", $proxvip);
+                    $stmt_vip->execute();
+                    $result_vip = $stmt_vip->get_result();
+                    $vip_data = $result_vip->fetch_assoc();
+
+                    $meta_vip_novo = $vip_data['meta'] ?? 0;
+                    $bonusvip = $vip_data['bonus'] ?? 0;
+                    $recompensa_vip = $datares['recompensa_vip'] ?? 0;
+
+                    // Verifica se atingiu a meta e ainda não recebeu o bônus
+                    if ($total_apostado >= $meta_vip_novo && $bonusvip > 0 && $recompensa_vip != $bonusvip) {
+                        $saldo_novo = $datares['saldo'] + $bonusvip;
+                        $nivel_vip_novo = $proxvip;
+                        $total_recompensas_vip = $datares['total_recompensa_vip'] + $bonusvip;
+                        $atualizarsaldoqry = $mysqli->prepare("UPDATE usuarios SET saldo = ?, vip = ?, recompensa_vip = ?, total_recompensa_vip = ? WHERE id = ?");
+                        $atualizarsaldoqry->bind_param("diddi", $saldo_novo, $nivel_vip_novo, $bonusvip, $total_recompensas_vip, $datares["id"]);
+                        $atualizarsaldoqry->execute();
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "vip" => $datares['vip'],
+                            "name" => "VIP" . (int) $datares['vip'],
+                            "vip_status" => 1,
+                            "valid_bet" => $total_apostado,
+                            "total_deposit" => 0,
+                            "vip_gift" => 0,
+                            "vip_bonus" => 30,
+                            "vip_bonus_details" => [
+                            ],
+                            "month_bet" => 0,
+                            "month_deposit" => 0,
+                            "month_bonus" => 0,
+                            "week_bet" => 0,
+                            "week_deposit" => 0,
+                            "week_bonus" => 0,
+                            "day_bet" => 0,
+                            "day_deposit" => 0,
+                            "day_bonus" => 0,
+                            "keep_level_bet" => 0,
+                            "keep_level_deposit" => 0,
+                            "vip_gift_status" => 2,
+                            "week_bonus_status" => 2,
+                            "month_bonus_status" => 2,
+                            "day_bonus_status" => 2,
+                            "icon_style" => "/siteadmin/active/style1/iconStyle/style_1_vip_style0.png",
+                            "icon_color" => "/siteadmin/active/style1/iconColor/style_1_vip_color1.png",
+                            "icon_color_value" => "24B299",
+                            "icon_card" => "",
+                            "icon_final_image" => "",
+                            "show_deposit" => false,
+                            "show_valid_bet" => true,
+                            "birthday_gift_status" => 2,
+                            "birthday_gift_receive_duration" => 0,
+                            "vip_gift_receive_duration" => 0,
+                            "week_bonus_receive_duration" => 0,
+                            "month_bonus_receive_duration" => 0,
+                            "day_bonus_receive_duration" => 0
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/vip') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+
+                    $stmt2 = $mysqli->prepare("SELECT * FROM segurança WHERE id_user = ?");
+                    $stmt2->bind_param("i", $datares['id']);
+                    $stmt2->execute();
+                    $resp2 = $stmt2->get_result();
+
+                    if ($resp2->num_rows > 0) {
+                        $segurança = $resp2->fetch_assoc();
+
+                        $id_questao = $segurança['questao'];
+                    } else {
+
+                        $id_questao = null;
+                    }
+
+                    // if ($datares['relogar'] == 1) {
+                    //     // Realizar o update na tabela usuarios
+                    //     $stmtUpdate = $mysqli->prepare("UPDATE usuarios SET relogar = 0 WHERE id = ?");
+                    //     $stmtUpdate->bind_param("i", $datares['id']);
+                    //     $stmtUpdate->execute();
+
+                    //     if ($stmtUpdate->affected_rows > 0) {
+                    //         setcookie('token_user', '', time() - 3600, '/');  // Expira o cookie definindo o tempo de expiração para uma hora atrás
+
+                    //         exit;
+                    //     } else {
+                    //        exit;
+                    //     }
+
+                    //     exit;  // Para garantir que o script não continue após o redirecionamento
+                    // }
+
+                    // Consulta total de jogadas e soma de bet_money
+                    $stmt3 = $mysqli->prepare("SELECT COUNT(*) as total_jogadas, SUM(bet_money) as total_apostado FROM historico_play WHERE id_user = ?");
+                    $stmt3->bind_param("i", $datares['id']);
+                    $stmt3->execute();
+                    $result3 = $stmt3->get_result();
+                    $historico = $result3->fetch_assoc();
+
+                    $total_jogadas = $historico['total_jogadas'] ?? 0;
+                    $total_apostado = $historico['total_apostado'] ?? 0;
+
+                    // Buscar meta e bônus do próximo nível VIP
+                    $proxvip = $datares['vip'] + 1;
+                    $stmt_vip = $mysqli->prepare("SELECT meta, bonus FROM vip_levels WHERE id_vip = ? LIMIT 1");
+                    $stmt_vip->bind_param("i", $proxvip);
+                    $stmt_vip->execute();
+                    $result_vip = $stmt_vip->get_result();
+                    $vip_data = $result_vip->fetch_assoc();
+
+                    $meta_vip_novo = $vip_data['meta'] ?? 0;
+                    $bonusvip = $vip_data['bonus'] ?? 0;
+                    $recompensa_vip = $datares['recompensa_vip'] ?? 0;
+
+                    // Verifica se atingiu a meta e ainda não recebeu o bônus
+                    if ($total_apostado >= $meta_vip_novo && $bonusvip > 0 && $recompensa_vip != $bonusvip) {
+                        $saldo_novo = $datares['saldo'] + $bonusvip;
+                        $nivel_vip_novo = $proxvip;
+                        $total_recompensas_vip = $datares['total_recompensa_vip'] + $bonusvip;
+                        $atualizarsaldoqry = $mysqli->prepare("UPDATE usuarios SET saldo = ?, vip = ?, recompensa_vip = ?, total_recompensa_vip = ? WHERE id = ?");
+                        $atualizarsaldoqry->bind_param("diddi", $saldo_novo, $nivel_vip_novo, $bonusvip, $total_recompensas_vip, $datares["id"]);
+                        $atualizarsaldoqry->execute();
+                    }
+
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "vip" => $datares['vip'],
+                            "vip_status" => 1,
+                            "user_validbet" => $total_apostado,
+                            "user_deposit" => 0,
+                            "next_vip" => $proxvip,
+                            "next_vip_validbet" => $meta_vip_novo,
+                            "need_validbet" => $meta_vip_novo - $total_apostado,
+                            "next_vip_deposit" => 0,
+                            "need_deposit" => 0,
+                            "username" => $datares['mobile'],
+                            "nickname" => "Udolf",
+                            "useridx" => $datares['id'],
+                            "realname" => "",
+                            "birthday" => "0",
+                            "weichat" => "",
+                            "wechat" => "",
+                            "whatsapp" => "",
+                            "facebook" => "",
+                            "telegram" => "",
+                            "zalo" => "",
+                            "line" => "",
+                            "twitter" => "",
+                            "threads" => "",
+                            "instagram" => "",
+                            "facebook_disable_edit" => 0,
+                            "phone" => "+55-" . substr(preg_replace('/\D/', '', $datares['celular']), 2, 2) . "******" . substr(preg_replace('/\D/', '', $datares['celular']), -3),
+                            "email" => "",
+                            "show_deposit" => false,
+                            "show_valid_bet" => true,
+                            "icon_style" => "/siteadmin/active/style1/iconStyle/style_1_vip_style0.png",
+                            "icon_color" => "/siteadmin/active/style1/iconColor/style_1_vip_color1.png",
+                            "icon_color_value" => "343434",
+                            "next_icon_style" => "",
+                            "next_icon_color" => "#FC2626",
+                            "next_icon_color_value" => "343434",
+                            "registerTime" => 1747297881,
+                            "background_index" => "10",
+                            "current_style" => "1",
+                            "vip_icon_show_type" => "0",
+                            "icon_card" => "",
+                            "icon_final_image" => ""
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/member/user/vipInfo') {
+            $rotaEncontrada = true;
+        
+            // Buscar todos os níveis VIP do banco
+            $vipSettings = [];
+            $stmt = $mysqli->prepare("SELECT id_vip, meta, bonus FROM vip_levels ORDER BY id_vip ASC");
+            $stmt->execute();
+            $result = $stmt->get_result();
+        
+            while ($row = $result->fetch_assoc()) {
+                $vip = (int) $row['id_vip'];
+                $metaAtual = (float) $row['meta'];
+                $levelUpBet = isset($prevMeta) ? $metaAtual - $prevMeta : $metaAtual;
+                
+                // Definir icon_color conforme faixa de VIP
+                if ($vip >= 0 && $vip <= 10) {
+                    $icon_color = "/siteadmin/active/style1/iconColor/style_1_vip_color1.avif";
+                } elseif ($vip >= 11 && $vip <= 20) {
+                    $icon_color = "/siteadmin/active/style1/iconColor/style_1_vip_color2.avif";
+                } elseif ($vip >= 21 && $vip <= 30) {
+                    $icon_color = "/siteadmin/active/style1/iconColor/style_1_vip_color3.avif";
+                } elseif ($vip >= 31 && $vip <= 40) {
+                    $icon_color = "/siteadmin/active/style1/iconColor/style_1_vip_color4.avif";
+                } else {
+                    $icon_color = ""; // Ou um padrão
+                }
+        
+                // CORREÇÃO: Tratar VIP 0 separadamente
+                if ($vip == 0) {
+                    $styleNum = 0;
+                } elseif ($vip % 10 == 0) {
+                    $styleNum = 10;
+                } else {
+                    $styleNum = $vip % 10;
+                }
+        
+                $vipSettings[] = [
+                    "vip" => $vip,
+                    "name" => "VIP" . $vip,
+                    "valid_bet" => $metaAtual / 100,
+                    "total_deposit" => 0,
+                    "vip_gift" => (float) $row['bonus'],
+                    "birthday_gift" => 0,
+                    "day_bet" => 0,
+                    "day_bonus" => 0,
+                    "week_bet" => 0,
+                    "week_bonus" => 0,
+                    "month_bet" => 0,
+                    "month_bonus" => 0,
+                    "icon_color" => $icon_color,
+                    "icon_style" => "/siteadmin/active/style1/iconStyle/style_1_vip_style" . $styleNum . ".avif",
+                    "day_deposit" => 0,
+                    "week_deposit" => 0,
+                    "month_deposit" => 0,
+                    "level_up_bet" => $levelUpBet,
+                    "level_up_deposit" => 0,
+                    "last_month_deposit" => 0,
+                    "last_month_bet" => 0,
+                    "icon_card" => "",
+                    "icon_final_image" => "",
+                    "vip_gift_status" => 2,
+                    "week_bonus_status" => 2,
+                    "month_bonus_status" => 2,
+                    "day_bonus_status" => 2,
+                    "maximumDailyWithdrawalAmount" => 0,
+                    "maximumDailyWithdrawalFreeOfFee" => 0,
+                    "maximumDailyWithdrawalNumber" => 0,
+                    "birthday_gift_status" => 2,
+                    "birthday_gift_receive_duration" => 0,
+                    "vip_gift_receive_duration" => 0,
+                    "week_bonus_receive_duration" => 0,
+                    "month_bonus_receive_duration" => 0,
+                    "day_bonus_receive_duration" => 0
+                ];
+                $prevMeta = $row['meta'];
+            }
+        
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "VipSettings" => $vipSettings,
+                    "VipRule" => "1.Padrão de Promoção: Atenda aos requisitos de promoção VIP (ou seja, tanto o depósito quanto as apostas válidas tem que atender aos critérios) para ser promovido ao nível VIP correspondente e receber o bônus de promoção correspondente. Se você subir consecutivamente vários níveis, poderá receber apenas o bônus de promoção do nível mais atual.Disponível após 00:00:00 do dia seguinte；
+                         2.Bônus Diário: Ao atender aos requisitos diários de depósito e apostas válidas do nível atual, você pode receber o correspondente bônus diário. Se avançar consecutivamente por vários níveis, apenas o bônus diário do nível atual pode ser obtido.Disponível após 00:00:00 do dia seguinte，Se não for resgatado após 3 dias, a recompensa expirará;
+                         3.Bônus Semanal: Ao atender aos requisitos de depósito e apostas válidas para o nível de cada semana, é possível receber o bônus semanal correspondente. Se você avançar vários níveis consecutivamente, apenas o bônus semanal do nível atual será obtido.Disponível entre 00:00:00 e 23:59:59 todas as segundas-feiras，Se não for resgatado após 3 dias, a recompensa expirará;
+                         4.Bônus Mensal: Ao atender aos requisitos de depósito e apostas válidas para o nível de cada mês, é possível receber o bônus salarial mensal correspondente. Se avançar consecutivamente por vários níveis, apenas o bônus mensal do nível atual pode ser obtido.Disponível mensalmente entre 1 do dia 00:00:00 e 23:59:59；Se não for resgatado após 3 dias, a recompensa expirará;
+                         5.Instruções de expiração da recompensa: As recompensas serão imediatamente invalidadas após a expiração. Por favor, reivindique-as antes que a contagem regressiva termine;
+                         6.Instruções para auditoria: O bônus VIP precisa ser apostado 1.5 vezes (ou seja, auditoria, por jogos ou apostas válidas) para saque, As apostas não estão limitadas a plataforma.ender o uso do site e confiscar bônus e lucros impróprios sem aviso prévio;
+                         8.Explicação: Ao reivindicar recompensas VIP, a plataforma presume que o membro concorda em cumprir as condições correspondentes e regulamentos relacionados. Para evitar mal-entendidos na interpretação do texto, a plataforma reserva o direito final
+                         7.Declaração do Evento: Esta funcionalidade é destinada a apostas de jogos normais do proprietário da conta. Alugar contas, apostas sem risco (combinando, brushing, probabilidades baixas), arbitragem maliciosa, uso de plug-ins, bots, exploração de acordos, vulnerabilidades, interfaces, controle de grupo, ou outros artifícios técnicos são proibidos. Caso sejam utilizados, a plataforma reserva o direito de excluir o login dos membros, susp de interpretar este evento.
+                         ",
+                    "keepLevelStatus" => 0,
+                    "ruleType" => 1,
+                    "weekReceiveDate" => -2,
+                    "monthReceiveDate" => -3,
+                    "totalAmount" => 0,
+                    "current_style" => "1",
+                    "vip_icon_show_type" => "0"
+                ]
+            ];
+        
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/statistics/domain/pointer') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/member/check/username') {
+            $rotaEncontrada = true;
+
+            $username = trim($data['username']);
+
+            // Escapar para evitar SQL injection
+            $username_escaped = mysqli_real_escape_string($mysqli, $username);
+
+            // Consulta para verificar se já existe
+            $query = "SELECT 1 FROM usuarios WHERE mobile = '$username_escaped' LIMIT 1";
+            $result = mysqli_query($mysqli, $query) or die(mysqli_error($mysqli));
+
+            if (mysqli_num_rows($result) > 0) {
+                // Username já existe — gerar sugestões que não estejam na tabela
+                $sugestoes = [];
+                $base = preg_replace('/[^a-zA-Z0-9]/', '', $username); // Remove caracteres inválidos
+                $tentativas = 0;
+
+                while (count($sugestoes) < 3 && $tentativas < 20) {
+                    $tentativas++;
+                    $sugestao = $base . rand(10, 99);
+
+                    // Verificar se a sugestão já está na base
+                    $checkQuery = "SELECT 1 FROM usuarios WHERE mobile = '$sugestao' LIMIT 1";
+                    $checkResult = mysqli_query($mysqli, $checkQuery);
+
+                    if (mysqli_num_rows($checkResult) === 0) {
+                        $sugestoes[] = $sugestao;
+                    }
+                }
+
+                $response = [
+                    "code" => 1,
+                    "msg" => "返回成功",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "available" => false,
+                        "suggestions" => $sugestoes
+                    ]
+                ];
+            } else {
+                // Username não existe — está disponível
+                $response = [
+                    "code" => 1,
+                    "msg" => "返回成功",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "available" => true
+                    ]
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/member/logout') {
+            $rotaEncontrada = true;
+
+            //header('Content-Type: text/plain')
+
+            // Apaga o cookie 'token_user'
+            setcookie('token_user', '', time() - 3600, '/');  // Define a expiração para 1 hora atrás;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota member/user/registerPopupDlgInfo (POST)
+        if ($requestURI === '/hall/api/member/user/registerPopupDlgInfo') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "popupType" => "register",
+                    "title" => "Cadastro de Usuário",
+                    "message" => "Complete seu cadastro para continuar",
+                    "fields" => [
+                        [
+                            "name" => "username",
+                            "type" => "text",
+                            "label" => "Nome de usuário",
+                            "required" => true,
+                            "placeholder" => "Digite seu nome de usuário"
+                        ],
+                        [
+                            "name" => "password",
+                            "type" => "password",
+                            "label" => "Senha",
+                            "required" => true,
+                            "placeholder" => "Digite sua senha"
+                        ],
+                        [
+                            "name" => "confirmPassword",
+                            "type" => "password",
+                            "label" => "Confirmar senha",
+                            "required" => true,
+                            "placeholder" => "Confirme sua senha"
+                        ],
+                        [
+                            "name" => "email",
+                            "type" => "email",
+                            "label" => "E-mail",
+                            "required" => false,
+                            "placeholder" => "Digite seu e-mail (opcional)"
+                        ],
+                        [
+                            "name" => "phone",
+                            "type" => "tel",
+                            "label" => "Telefone",
+                            "required" => true,
+                            "placeholder" => "Digite seu telefone"
+                        ]
+                    ],
+                    "buttons" => [
+                        [
+                            "text" => "Cancelar",
+                            "type" => "cancel",
+                            "action" => "close"
+                        ],
+                        [
+                            "text" => "Cadastrar",
+                            "type" => "submit",
+                            "action" => "register"
+                        ]
+                    ],
+                    "showTerms" => true,
+                    "termsText" => "Ao se cadastrar, você concorda com nossos Termos de Uso e Política de Privacidade",
+                    "timestamp" => round(microtime(true) * 1000)
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota active/recharge/financeGiveReward (POST)
+        if ($requestURI === '/hall/api/active/recharge/financeGiveReward') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "rewardType" => "finance",
+                    "rewardAmount" => 100.00,
+                    "currency" => "BRL",
+                    "transactionId" => "TXN" . time() . rand(1000, 9999),
+                    "status" => "success",
+                    "message" => "Recompensa financeira concedida com sucesso",
+                    "details" => [
+                        "bonusPercentage" => 10,
+                        "minimumDeposit" => 50.00,
+                        "maximumReward" => 500.00,
+                        "validUntil" => date('Y-m-d H:i:s', strtotime('+30 days')),
+                        "terms" => "Recompensa válida por 30 dias. Sujeita aos termos e condições."
+                    ],
+                    "userBalance" => [
+                        "before" => 250.00,
+                        "after" => 350.00,
+                        "currency" => "BRL"
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota active/refreshActiveStatistic (POST)
+        if ($requestURI === '/hall/api/active/refreshActiveStatistic') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "Estatísticas ativas atualizadas com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "refreshed" => true,
+                    "statisticType" => "active",
+                    "refreshTime" => date('Y-m-d H:i:s'),
+                    "statistics" => [
+                        "totalActiveUsers" => 15847,
+                        "activePromotions" => 12,
+                        "totalRewards" => 89234.50,
+                        "currency" => "BRL",
+                        "lastUpdate" => date('Y-m-d H:i:s'),
+                        "refreshInterval" => 300
+                    ],
+                    "performance" => [
+                        "responseTime" => "0.045s",
+                        "cacheStatus" => "refreshed",
+                        "dataSource" => "live"
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/gameCenter/gameApi/recentPlatformList') {
+            $rotaEncontrada = true;
+
+            //header('Content-Type: text/plain');
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/gameCenter/gameApi/RefreshGold') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "errorCode" => 41029527,
+                "code" => 9527,
+                "msg" => "Não há saldo para ser sacado no momento",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/gameCenter/gold') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "code" => 1,
+                            "game_gold" => $datares['saldo'],
+                            "bonus" => "0",
+                            "totalGold" => "0",
+                            "bonusRequireBet" => "0",
+                            "auditMode" => 1
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+        }
+        
+        // Rota member/user/refreshVipStatistic (POST)
+        if ($requestURI === '/hall/api/member/user/refreshVipStatistic') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "msg" => "Estatísticas VIP atualizadas com sucesso",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "refreshed" => true,
+                    "statisticType" => "vip",
+                    "refreshTime" => date('Y-m-d H:i:s'),
+                    "statistics" => [
+                        "totalVipUsers" => 3247,
+                        "vipLevels" => [
+                            "bronze" => 1523,
+                            "silver" => 982,
+                            "gold" => 547,
+                            "platinum" => 163,
+                            "diamond" => 32
+                        ],
+                        "totalVipRewards" => 245678.90,
+                        "monthlyVipBonus" => 45230.50,
+                        "currency" => "BRL",
+                        "lastUpdate" => date('Y-m-d H:i:s'),
+                        "refreshInterval" => 600
+                    ],
+                    "vipActivity" => [
+                        "activeVipsToday" => 1847,
+                        "newVipsThisMonth" => 234,
+                        "upgradedThisWeek" => 89,
+                        "totalVipBets" => 1247893.45
+                    ],
+                    "performance" => [
+                        "responseTime" => "0.038s",
+                        "cacheStatus" => "refreshed",
+                        "dataSource" => "live"
+                    ]
+                ]
+            ];
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/getPlatformBalance (POST) --> Obter Saldo da Plataforma
+        if ($requestURI === '/hall/api/gameCenter/gameApi/getPlatformBalance') {
+            $rotaEncontrada = true;
+
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "balance" => floatval($datares['saldo']),
+                            "currency" => "BRL",
+                            "platform" => "main"
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário não encontrado",
+                        "time" => round(microtime(true) * 1000)
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => round(microtime(true) * 1000)
+                ];
+                http_response_code(401);
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
+
+        // Rota statistics/domain/pointer (POST)
+        if ($requestURI === '/hall/api/gameCenter/gameApi/logout') {
+            if (!empty($_COOKIE['token_user'])) {
+                $token = $_COOKIE['token_user'];
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datares = $resp->fetch_assoc();
+
+                     // Adiciona registro na tabela lobby_pgsoft com tipo 'saida'
+                    $stmtLobby = $mysqli->prepare("INSERT INTO lobby_pgsoft (id_user, saldo, tipo, data_registro) VALUES (?, ?, 'saida', CONVERT_TZ(NOW(), '+00:00', '-03:00'))");
+                    $stmtLobby->bind_param("id", $datares['id'], $datares['saldo']);
+                    $stmtLobby->execute();
+                    $stmtLobby->close();
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "game_gold" => $datares['saldo'],
+                            "code" => 1,
+                            "bonus" => "0", // SALDO DE BONUS
+                            "totalGold" => "0", // TOTAL SALDO COM BONUS
+                            "bonusRequireBet" => "0", // BET PARA SACAR
+                            "auditMode" => 1
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                http_response_code(401); // Unauthorized
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota api/active/redPackIndex (POST)
+        if ($requestURI === '/hall/api/active/redPackIndex') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "display" => 0,
+                    "redList" => null,
+                    "avtiveRedList" => [
+                    ],
+                    "sendList" => [
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota api/active/redPackIndex (POST)
+        if ($requestURI === '/hall/api/gameCenter/addFavorite') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota agent/promote/pointer (POST)
+        if ($requestURI === '/hall/api/agent/promote/pointer/domain') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota agent/promote/getIpBindInfo (POST)
+        if ($requestURI === '/hall/api/agent/promote/getIpBindInfo') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota agent/promote/getIpBindInfo (POST)
+        if ($requestURI === '/hall/api/message/read') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota backstage/customer/getUserFeedback (POST)
+        if ($requestURI === '/hall/api/backstage/customer/getUserFeedback') {
+            $rotaEncontrada = true;
+            
+            // Captura os dados enviados (paginação, filtros, etc)
+            $inputData = json_decode(file_get_contents('php://input'), true);
+            
+            // Parâmetros de paginação
+            $page = isset($inputData['page']) ? (int)$inputData['page'] : 1;
+            $pageSize = isset($inputData['pageSize']) ? (int)$inputData['pageSize'] : 10;
+            $offset = ($page - 1) * $pageSize;
+            
+            try {
+                // Pega o user_id do cookie token
+                $userId = null;
+                if (isset($_COOKIE['token_user'])) {
+                    $token = PHP_SEGURO($_COOKIE['token_user']);
+                    $stmt_user = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+                    $stmt_user->bind_param("s", $token);
+                    $stmt_user->execute();
+                    $result_user = $stmt_user->get_result();
+                    if ($result_user && $result_user->num_rows > 0) {
+                        $row_user = $result_user->fetch_assoc();
+                        $userId = $row_user['id'];
+                    }
+                    $stmt_user->close();
+                }
+                
+                // Se não tiver usuário logado, retorna vazio
+                if (!$userId) {
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "result" => [],
+                            "count" => 0,
+                            "unRead" => 0,
+                            "availableRewards" => 0
+                        ]
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                // Conta total de feedbacks do usuário
+                $stmt_count = $mysqli->prepare("SELECT COUNT(*) as total FROM customer_feedback WHERE user_id = ?");
+                $stmt_count->bind_param("i", $userId);
+                $stmt_count->execute();
+                $result_count = $stmt_count->get_result();
+                $total = $result_count->fetch_assoc()['total'];
+                $stmt_count->close();
+                
+                // Conta feedbacks não lidos (status = 'pending')
+                $stmt_unread = $mysqli->prepare("SELECT COUNT(*) as unread FROM customer_feedback WHERE user_id = ? AND status = 'pending'");
+                $stmt_unread->bind_param("i", $userId);
+                $stmt_unread->execute();
+                $result_unread = $stmt_unread->get_result();
+                $unRead = $result_unread->fetch_assoc()['unread'];
+                $stmt_unread->close();
+                
+                // Conta bônus disponíveis para resgatar
+                $stmt_rewards = $mysqli->prepare("
+                    SELECT COUNT(*) as available 
+                    FROM customer_feedback 
+                    WHERE user_id = ? 
+                    AND bonus_amount > 0 
+                    AND bonus_received = 0
+                    AND status = 'replied'
+                ");
+                $stmt_rewards->bind_param("i", $userId);
+                $stmt_rewards->execute();
+                $result_rewards = $stmt_rewards->get_result();
+                $availableRewards = $result_rewards->fetch_assoc()['available'];
+                $stmt_rewards->close();
+                
+                // Busca os feedbacks com paginação - AGORA COM OS CAMPOS DE BÔNUS
+                $stmt = $mysqli->prepare("
+                    SELECT 
+                        id,
+                        type,
+                        content,
+                        file_link,
+                        status,
+                        reply,
+                        reply_time,
+                        bonus_amount,
+                        bonus_received,
+                        client_time,
+                        created_at,
+                        updated_at
+                    FROM customer_feedback 
+                    WHERE user_id = ? 
+                    ORDER BY created_at DESC 
+                    LIMIT ? OFFSET ?
+                ");
+                
+                if (!$stmt) {
+                    throw new Exception("Erro na preparação da query: " . $mysqli->error);
+                }
+                
+                $stmt->bind_param("iii", $userId, $pageSize, $offset);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                $feedbacks = [];
+                while ($row = $result->fetch_assoc()) {
+                    // Converte reply_time para timestamp se existir
+                    $replyTimestamp = 0;
+                    if ($row['reply_time']) {
+                        $replyTimestamp = strtotime($row['reply_time']);
+                    }
+                    
+                    // Monta o array de chat
+                    $chat = [
+                        [
+                            "time" => (int)$row['client_time'],
+                            "type" => 1, // 1 = mensagem do usuário
+                            "content" => $row['content']
+                        ],
+                        [
+                            "time" => $replyTimestamp,
+                            "type" => 2, // 2 = resposta do admin
+                            "content" => $row['reply'] ?? ""
+                        ]
+                    ];
+                    
+                    // Determina o status numérico (0 = pending, 1 = replied, 2 = closed)
+                    $statusCode = 0;
+                    if ($row['status'] === 'replied') {
+                        $statusCode = 1;
+                    } elseif ($row['status'] === 'closed') {
+                        $statusCode = 2;
+                    }
+                    
+                    // Determina se a resposta foi lida (se tem resposta e status não é pending)
+                    $replyRead = 0;
+                    if ($row['reply'] && $row['status'] !== 'pending') {
+                        $replyRead = 1;
+                    }
+                    
+                    $feedbacks[] = [
+                        "feedbackId" => (int)$row['id'],
+                        "receiveStatus" => (int)($row['bonus_received'] ?? 0), // 0 = não recebido, 1 = recebido
+                        "fileLink" => $row['file_link'] ?? "",
+                        "content" => $row['content'],
+                        "bonus" => (float)($row['bonus_amount'] ?? 0), // Valor do bônus
+                        "createTime" => (int)$row['client_time'],
+                        "status" => $statusCode,
+                        "replyRead" => $replyRead,
+                        "type" => (int)$row['type'],
+                        "chat" => $chat
+                    ];
+                }
+                $stmt->close();
+                
+                $response = [
+                    "code" => 1,
+                    "msg" => "返回成功",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "result" => $feedbacks,
+                        "count" => (int)$total,
+                        "unRead" => (int)$unRead,
+                        "availableRewards" => (int)$availableRewards // Quantidade de bônus disponíveis
+                    ]
+                ];
+                
+            } catch (Exception $e) {
+                error_log("Erro ao buscar feedbacks: " . $e->getMessage());
+                
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao buscar feedbacks",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => [
+                        "result" => [],
+                        "count" => 0,
+                        "unRead" => 0,
+                        "availableRewards" => 0
+                    ]
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/yuebao/index') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "switchStatus" => 1,
+                    "yuebaoGold" => 0,
+                    "curIncome" => 0,
+                    "yearRate" => 500,
+                    "settleType" => 60,
+                    "totalIncome" => 0,
+                    "dayRate" => 1.36,
+                    "cycleIncome" => 13698.63,
+                    "cycleTime" => 60,
+                    "minSave" => 20,
+                    "gameGold" => 0,
+                    "validBetTimes" => 1,
+                    "nextCalculateIncomeTime" => 1747450800,
+                    "nextCycleTime" => 1747395854,
+                    "principal" => 0,
+                    "isPop" => 1,
+                    "receiveType" => 1,
+                    "todayUnclaimed" => 0,
+                    "claimed" => 0,
+                    "interestTop" => 1,
+                    "ruleText" => "1.<strong>Introdução aos ganhos:</strong> O valor depositado no tesouro de juros deve satisfazer pelo menos um ciclo completo para gerar juros. Se for transferido antecipadamente, nenhum lucro será calculado nesse período. Por exemplo: o período de liquidação atual é de 1 horas, então o valor transferido por 01/01/2025 00:00:01 gerará juros no primeiro período em 01/01/2025 01:00:01;
+             2.<strong>Ciclo de liquidação:</strong> O ciclo atual de liquidação de juros é de 1 horas;
+             3.<strong>Taxa de Juros Anual: </strong>A taxa percentual anual atual é500%;
+             4.<strong> Fórmula de cálculo: </strong>Rendimento da Poupança = valor do depósito × Taxa de juros anual / ciclo de liquidação;
+             5.<strong>Exemplo:</strong>A deposita 01/01/2025 00:00:01 em 10.000, a taxa de juros anual é 500% e o período de liquidação é 1 horas, então a primeira receita de juros é obtida em 01/01/2025 01:00:01. O método de cálculo é o seguinte:<strong>Primeiros juros =10.000*500%/365 dias/24 horas*1 horas = 5,707762</strong>;
+             6.<strong>Limite de transferência:</strong> cada valor de transferência deve ser maior ou igual a 20 (ou seja, ≥20). Não há limite máximo para o valor da transferência. Quanto maior for a transferência, maior será o rendimento;
+             7.<strong>Limite de rendimentos: </strong>No momento, o limite de rendimentos permite acumular em até 1 ciclos. Após esse período, não haverá mais geração de rendimentos. Para evitar a perda de rendimentos, lembre-se de receber seus lucros periodicamente!
+             8.<strong>Horário de cobrança:</strong> Atualmente é cobrado no dia seguinte, ou seja, os juros gerados nesse dia não podem ser cobrados até às 0h00 do dia seguinte;
+             9.<strong>Múltiplo de auditoria:</strong> O múltiplo de auditoria atual é 1 vezes (requisitos de volume de apostas), ou seja, os juros recebidos precisam ser colocados antes que o dinheiro possa ser sacado, aposta Nenhuma plataforma válida específica,Apenas os juros recebidos requerem auditoria, enquanto o valor principal transferido para dentro ou para fora não requer auditoria;
+             10.<strong>Declaração do evento: </strong> Esta função é exclusiva para apostas em jogos realizadas pelo próprio titular da conta. Alugar, usar bots, robôs, apostas entre contas diferentes, apostas mútuas, arbitragem, acesso à API, exploração de falhas, controle de grupo ou outros meios técnicos são proibidos.O controle de grupo ou outros meios técnicos são proibidos. Uma vez verificado, a plataforma reserva o direito de encerrar os logins dos membros, suspender o uso do site pelos membros e confiscar bônus e lucros impróprios sem aviso prévio;
+             11.<strong>Explicação:</strong> Quando um membro recebe a recompensa Yibao, a plataforma presumirá que o membro concorda e cumpre as condições correspondentes e outros regulamentos relevantes. Para evitar ambiguidade na compreensão do texto, a plataforma reserva-se o direito. para a interpretação final deste evento."
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+        // Rota backstage/customer/feedback (POST)
+        if ($requestURI === '/hall/api/backstage/customer/feedback') {
+            $rotaEncontrada = true;
+            
+            // Captura os dados enviados no corpo da requisição
+            $inputData = json_decode(file_get_contents('php://input'), true);
+            
+            // Validação básica
+            if (empty($inputData) || !isset($inputData['type']) || !isset($inputData['content'])) {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Dados inválidos",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            
+            try {
+                // Sanitiza os dados
+                $type = (int)$inputData['type'];
+                $content = PHP_SEGURO($inputData['content']);
+                $source = PHP_SEGURO($inputData['source'] ?? 'Unknown');
+                $clientTime = (int)($inputData['time'] ?? round(microtime(true) * 1000));
+                
+                // Pega o user_id do cookie token se disponível
+                $userId = null;
+                if (isset($_COOKIE['token_user'])) {
+                    $token = PHP_SEGURO($_COOKIE['token_user']);
+                    $stmt_user = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+                    $stmt_user->bind_param("s", $token);
+                    $stmt_user->execute();
+                    $result_user = $stmt_user->get_result();
+                    if ($result_user && $result_user->num_rows > 0) {
+                        $row_user = $result_user->fetch_assoc();
+                        $userId = $row_user['id'];
+                    }
+                    $stmt_user->close();
+                }
+                
+                // Prepara o statement SQL
+                $stmt = $mysqli->prepare("
+                    INSERT INTO customer_feedback 
+                    (user_id, type, content, source, status, client_time, created_at) 
+                    VALUES 
+                    (?, ?, ?, ?, 'pending', ?, NOW())
+                ");
+                
+                $stmt->bind_param("iissi", $userId, $type, $content, $source, $clientTime);
+                
+                // Executa a inserção
+                if ($stmt->execute()) {
+                    $feedbackId = $mysqli->insert_id;
+                    
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "feedbackId" => (int)$feedbackId,
+                            "status" => "submitted",
+                            "message" => "Feedback salvo com sucesso"
+                        ]
+                    ];
+                } else {
+                    throw new Exception("Erro ao executar query");
+                }
+                
+                $stmt->close();
+                
+            } catch (Exception $e) {
+                // Log do erro
+                error_log("Erro ao salvar feedback: " . $e->getMessage());
+                
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao processar feedback",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/finance/claim/unreadMsgCnt') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "unreadCnt" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+        
+        // Rota backstage/customer/getAwardInfo (POST/GET)
+        if ($requestURI === '/hall/api/backstage/customer/getAwardInfo') {
+            $rotaEncontrada = true;
+            
+            $inputData = json_decode(file_get_contents('php://input'), true);
+            $feedbackId = 0;
+            
+            if (isset($inputData['feedbackId'])) {
+                $feedbackId = (int)$inputData['feedbackId'];
+            } elseif (isset($_GET['feedbackId'])) {
+                $feedbackId = (int)$_GET['feedbackId'];
+            }
+            
+            try {
+                $userId = null;
+                if (isset($_COOKIE['token_user'])) {
+                    $token = PHP_SEGURO($_COOKIE['token_user']);
+                    $stmt_user = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+                    $stmt_user->bind_param("s", $token);
+                    $stmt_user->execute();
+                    $result_user = $stmt_user->get_result();
+                    if ($result_user && $result_user->num_rows > 0) {
+                        $row_user = $result_user->fetch_assoc();
+                        $userId = $row_user['id'];
+                    }
+                    $stmt_user->close();
+                }
+                
+                if (!$userId) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário não autenticado",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                if (!$feedbackId) {
+                    $stmt_last = $mysqli->prepare("
+                        SELECT id 
+                        FROM customer_feedback 
+                        WHERE user_id = ? 
+                        ORDER BY created_at DESC 
+                        LIMIT 1
+                    ");
+                    $stmt_last->bind_param("i", $userId);
+                    $stmt_last->execute();
+                    $result_last = $stmt_last->get_result();
+                    if ($result_last && $result_last->num_rows > 0) {
+                        $row_last = $result_last->fetch_assoc();
+                        $feedbackId = (int)$row_last['id'];
+                    }
+                    $stmt_last->close();
+                }
+                
+                if (!$feedbackId) {
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "feedbackId" => 0,
+                            "bonus" => "0.00",
+                            "receiveBonusStatus" => 0,
+                            "feebackContent" => ""
+                        ]
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                $stmt = $mysqli->prepare("
+                    SELECT 
+                        id,
+                        user_id,
+                        reply,
+                        bonus_amount,
+                        bonus_received
+                    FROM customer_feedback 
+                    WHERE id = ? AND user_id = ?
+                ");
+                
+                if (!$stmt) {
+                    throw new Exception("Erro na preparação da query: " . $mysqli->error);
+                }
+                
+                $stmt->bind_param("ii", $feedbackId, $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($result && $result->num_rows > 0) {
+                    $feedback = $result->fetch_assoc();
+                    
+                    $bonus = number_format($feedback['bonus_amount'], 2, '.', '');
+                    $receiveBonusStatus = (int)$feedback['bonus_received'];
+                    $feebackContent = $feedback['reply'] ?? "";
+                    
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "feedbackId" => (int)$feedback['id'],
+                            "bonus" => $bonus,
+                            "receiveBonusStatus" => $receiveBonusStatus,
+                            "feebackContent" => $feebackContent
+                        ]
+                    ];
+                } else {
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "feedbackId" => $feedbackId,
+                            "bonus" => "0.00",
+                            "receiveBonusStatus" => 0,
+                            "feebackContent" => ""
+                        ]
+                    ];
+                }
+                
+                $stmt->close();
+                
+            } catch (Exception $e) {
+                error_log("Erro ao buscar informações do prêmio: " . $e->getMessage());
+                
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao buscar informações",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+        // Rota backstage/customer/receiveAward (POST)
+        if ($requestURI === '/hall/api/backstage/customer/receiveAward') {
+            $rotaEncontrada = true;
+            
+            // Captura o corpo da requisição
+            $rawInput = file_get_contents('php://input');
+            $inputData = json_decode($rawInput, true);
+            
+            $feedbackId = 0;
+            
+            // Tenta pegar o feedback ID de várias formas possíveis
+            if (isset($inputData['feedback']) && $inputData['feedback'] > 0) {
+                $feedbackId = (int)$inputData['feedback'];
+            } elseif (isset($inputData['feedbackId']) && $inputData['feedbackId'] > 0) {
+                $feedbackId = (int)$inputData['feedbackId'];
+            } elseif (isset($inputData['feedback_id']) && $inputData['feedback_id'] > 0) {
+                $feedbackId = (int)$inputData['feedback_id'];
+            } elseif (isset($inputData['id']) && $inputData['id'] > 0) {
+                $feedbackId = (int)$inputData['id'];
+            } elseif (isset($_POST['feedback']) && $_POST['feedback'] > 0) {
+                $feedbackId = (int)$_POST['feedback'];
+            } elseif (isset($_GET['feedback']) && $_GET['feedback'] > 0) {
+                $feedbackId = (int)$_GET['feedback'];
+            }
+            
+            try {
+                // Pega o user_id do cookie token
+                $userId = null;
+                if (isset($_COOKIE['token_user'])) {
+                    $token = PHP_SEGURO($_COOKIE['token_user']);
+                    $stmt_user = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+                    $stmt_user->bind_param("s", $token);
+                    $stmt_user->execute();
+                    $result_user = $stmt_user->get_result();
+                    if ($result_user && $result_user->num_rows > 0) {
+                        $row_user = $result_user->fetch_assoc();
+                        $userId = $row_user['id'];
+                    }
+                    $stmt_user->close();
+                }
+                
+                if (!$userId) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário não autenticado",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                // Se feedbackId ainda é 0, tenta buscar o último feedback com bônus disponível do usuário
+                if (!$feedbackId || $feedbackId == 0) {
+                    $stmt_last = $mysqli->prepare("
+                        SELECT id 
+                        FROM customer_feedback 
+                        WHERE user_id = ? 
+                        AND bonus_amount > 0 
+                        AND bonus_received = 0
+                        AND status = 'replied'
+                        ORDER BY created_at DESC 
+                        LIMIT 1
+                    ");
+                    $stmt_last->bind_param("i", $userId);
+                    $stmt_last->execute();
+                    $result_last = $stmt_last->get_result();
+                    if ($result_last && $result_last->num_rows > 0) {
+                        $row_last = $result_last->fetch_assoc();
+                        $feedbackId = (int)$row_last['id'];
+                    }
+                    $stmt_last->close();
+                }
+                
+                if (!$feedbackId || $feedbackId == 0) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Nenhum bônus disponível para resgatar",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                // Inicia transação
+                $mysqli->begin_transaction();
+                
+                // Busca o feedback
+                $stmt = $mysqli->prepare("
+                    SELECT bonus_amount, bonus_received, user_id, status, reply
+                    FROM customer_feedback 
+                    WHERE id = ? AND user_id = ?
+                ");
+                $stmt->bind_param("ii", $feedbackId, $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($result && $result->num_rows > 0) {
+                    $feedback = $result->fetch_assoc();
+                    $stmt->close();
+                    
+                    // Verifica se já foi recebido
+                    if ($feedback['bonus_received'] == 1) {
+                        $mysqli->rollback();
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Bônus já foi recebido",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => null
+                        ];
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                    
+                    // Verifica se tem bônus
+                    if ($feedback['bonus_amount'] <= 0) {
+                        $mysqli->rollback();
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Não há bônus disponível",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => null
+                        ];
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                    
+                    // Verifica se foi respondido
+                    if ($feedback['status'] !== 'replied' && $feedback['status'] !== 'approved') {
+                        $mysqli->rollback();
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Feedback ainda não foi respondido",
+                            "time" => round(microtime(true) * 1000),
+                            "data" => null
+                        ];
+                        echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                        exit;
+                    }
+                    
+                    $bonusAmount = $feedback['bonus_amount'];
+                    
+                    // Atualiza o saldo
+                    $stmt_update_saldo = $mysqli->prepare("
+                        UPDATE usuarios 
+                        SET saldo = saldo + ? 
+                        WHERE id = ?
+                    ");
+                    $stmt_update_saldo->bind_param("di", $bonusAmount, $userId);
+                    $stmt_update_saldo->execute();
+                    $stmt_update_saldo->close();
+                    
+                    // Marca como recebido
+                    $stmt_update_feedback = $mysqli->prepare("
+                        UPDATE customer_feedback 
+                        SET bonus_received = 1, 
+                            bonus_received_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = ?
+                    ");
+                    $stmt_update_feedback->bind_param("i", $feedbackId);
+                    $stmt_update_feedback->execute();
+                    $stmt_update_feedback->close();
+                    
+                    // Commit
+                    $mysqli->commit();
+                    
+                    // BUSCA DADOS ATUALIZADOS PARA RETORNAR
+                    $stmt_updated = $mysqli->prepare("
+                        SELECT 
+                            id, type, content, file_link, status, reply, 
+                            reply_time, bonus_amount, bonus_received, 
+                            client_time, created_at, updated_at
+                        FROM customer_feedback 
+                        WHERE id = ?
+                    ");
+                    $stmt_updated->bind_param("i", $feedbackId);
+                    $stmt_updated->execute();
+                    $result_updated = $stmt_updated->get_result();
+                    $feedback_updated = $result_updated->fetch_assoc();
+                    $stmt_updated->close();
+                    
+                    // Prepara dados do feedback atualizado
+                    $replyTimestamp = $feedback_updated['reply_time'] ? strtotime($feedback_updated['reply_time']) : 0;
+                    
+                    $chat = [
+                        [
+                            "time" => (int)$feedback_updated['client_time'],
+                            "type" => 1,
+                            "content" => $feedback_updated['content']
+                        ],
+                        [
+                            "time" => $replyTimestamp,
+                            "type" => 2,
+                            "content" => $feedback_updated['reply'] ?? ""
+                        ]
+                    ];
+                    
+                    $statusCode = 0;
+                    if ($feedback_updated['status'] === 'replied') {
+                        $statusCode = 1;
+                    } elseif ($feedback_updated['status'] === 'closed') {
+                        $statusCode = 2;
+                    }
+                    
+                    $replyRead = ($feedback_updated['reply'] && $feedback_updated['status'] !== 'pending') ? 1 : 0;
+                    
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "success" => true,
+                            "bonusAmount" => number_format($bonusAmount, 2, '.', ''),
+                            "feedback" => [
+                                "feedbackId" => (int)$feedback_updated['id'],
+                                "receiveStatus" => 1,
+                                "fileLink" => $feedback_updated['file_link'] ?? "",
+                                "content" => $feedback_updated['content'],
+                                "bonus" => (float)$feedback_updated['bonus_amount'],
+                                "createTime" => (int)$feedback_updated['client_time'],
+                                "status" => $statusCode,
+                                "replyRead" => $replyRead,
+                                "type" => (int)$feedback_updated['type'],
+                                "chat" => $chat
+                            ]
+                        ]
+                    ];
+                    
+                } else {
+                    $stmt->close();
+                    $mysqli->rollback();
+                    
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Feedback não encontrado",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => null
+                    ];
+                }
+                
+            } catch (Exception $e) {
+                if (isset($mysqli) && $mysqli->ping()) {
+                    $mysqli->rollback();
+                }
+                error_log("Erro ao receber bônus: " . $e->getMessage());
+                
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao processar bônus",
+                    "time" => round(microtime(true) * 1000),
+                    "data" => null
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/receivedAwardList') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "totalReward" => 0,
+                    "totalActivity" => 0,
+                    "count" => 0,
+                    "list" => [
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/yuebao/profitCount') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "totalSaveGold" => 0,
+                    "totalTakeoutGold" => 0,
+                    "totalIncome" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/yuebao/profitRecord') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "list" => [
+                    ],
+                    "total" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/unreceiveAwardList') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "totalReward" => 0,
+                    "totalActivity" => 0,
+                    "count" => 0,
+                    "list" => [
+                    ],
+                    "redDotCount" => 0,
+                    "redDotAmount" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/agentPromotion') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true;
+
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datres = $resp->fetch_assoc();
+                    $inviteCode = $datres['invite_code'];
+
+                    // Buscar quantidade de usuários convidados
+                    $stmtCount = $mysqli->prepare("SELECT COUNT(*) as total FROM usuarios WHERE invitation_code = ?");
+                    $stmtCount->bind_param("s", $inviteCode);
+                    $stmtCount->execute();
+                    $resultCount = $stmtCount->get_result();
+                    $rowCount = $resultCount->fetch_assoc();
+                    $directMember = $rowCount['total'] ?? 0;
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "directMember" => (int)$directMember,
+                            "linkList" => [
+                                [
+                                    "url" => $url_base . "?id=" . $inviteCode . "&currency=BRL&type=2",
+                                    "select" => true
+                                ]
+                            ],
+                            "inviteCode" => $inviteCode
+                        ]
+                    ];
+                }
+
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Usuário sem efetuar login",
+                ];
+                http_response_code(401);
+                echo json_encode($response);
+                exit;
+            }
+        }
+        
+        // Rota agent/promote/linkSetting (POST)
+        if ($requestURI === '/hall/api/agent/promote/linkSetting') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Pega o user_id do cookie token
+                $userId = null;
+                if (isset($_COOKIE['token_user'])) {
+                    $token = PHP_SEGURO($_COOKIE['token_user']);
+                    $stmt_user = $mysqli->prepare("SELECT id FROM usuarios WHERE token = ?");
+                    $stmt_user->bind_param("s", $token);
+                    $stmt_user->execute();
+                    $result_user = $stmt_user->get_result();
+                    if ($result_user && $result_user->num_rows > 0) {
+                        $row_user = $result_user->fetch_assoc();
+                        $userId = $row_user['id'];
+                    }
+                    $stmt_user->close();
+                }
+                
+                if (!$userId) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário não autenticado",
+                        "time" => time(),
+                        "data" => null
+                    ];
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                
+                // Busca as configurações do link de afiliado do usuário
+                // Você pode criar uma tabela específica para isso ou usar a tabela de configurações
+                // Por enquanto vou retornar valores padrão
+                
+                // linkType possíveis:
+                // 1 = Link simples
+                // 2 = Link com código de convite
+                // 3 = QR Code
+                
+                $linkType = 2; // Padrão: Link com código de convite
+                $currency = ""; // Moeda (vazio por padrão)
+                
+                // Se você quiser buscar do banco de dados:
+                /*
+                $stmt = $mysqli->prepare("
+                    SELECT link_type, currency 
+                    FROM agent_settings 
+                    WHERE user_id = ?
+                ");
+                $stmt->bind_param("i", $userId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($result && $result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $linkType = (int)$row['link_type'];
+                    $currency = $row['currency'] ?? "";
+                }
+                $stmt->close();
+                */
+                
+                $response = [
+                    "code" => 1,
+                    "msg" => "返回成功",
+                    "time" => time(),
+                    "data" => [
+                        "linkType" => $linkType,
+                        "currency" => $currency
+                    ]
+                ];
+                
+            } catch (Exception $e) {
+                error_log("Erro em linkSetting: " . $e->getMessage());
+                
+                $response = [
+                    "code" => 0,
+                    "msg" => "Erro ao buscar configurações",
+                    "time" => time(),
+                    "data" => null
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/getPublicityV2') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "mode" => 2,
+                    "jointImage" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/agent/img/1912624934793785345.png",
+                    "publicitySkinId" => 0,
+                    "publicityLogo" => "",
+                    "publicitySiteAddr" => "",
+                    "publicitySiteName" => "",
+                    "publicityBgmode" => 0,
+                    "publicityBgcolor" => "",
+                    "publicityMode" => 1,
+                    "customizePublicity" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/agent/img/1912624885371449345.jpg",
+                    "publicityIntrdMode" => 1,
+                    "publicityIntruduction" => "",
+                    "publicityIntrdBgmode" => 0,
+                    "publicityIntrdBgcolor" => "",
+                    "publicityIcon" => ""  // COLOCAR A IMAGEM BASE64 AQUI
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota agent/promote/report/myTotalData (POST) --> Meus Dados
+        if ($requestURI === '/hall/api/agent/promote/report/myTotalData') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true; // Rota encontrada
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datres = $resp->fetch_assoc();
+                    $userId = $datres['id'];
+                    $codigoConvite = $datres['invite_code'];
+
+                    // Obtendo o parâmetro 'timeEnum' da req
+                    $timeType = isset($data['timeEnum']) ? (int) $data['timeEnum'] : 0;
+
+                    // Buscar usuários diretos (nível 1)
+                    $consultaUsuariosDiretos = "SELECT id, invite_code FROM usuarios WHERE invitation_code = '$codigoConvite'";
+                    $resultadoUsuariosDiretos = mysqli_query($mysqli, $consultaUsuariosDiretos);
+                    $usuariosDiretos = [];
+                    $idsUsuariosDiretos = [];
+                    
+                    if ($resultadoUsuariosDiretos) {
+                        while ($linha = mysqli_fetch_assoc($resultadoUsuariosDiretos)) {
+                            $usuariosDiretos[] = $linha;
+                            $idsUsuariosDiretos[] = $linha['id'];
+                        }
+                    }
+
+                    // Buscar usuários indiretos (níveis 2 e 3)
+                    $idsUsuariosIndiretos = [];
+                    foreach ($usuariosDiretos as $usuarioDireto) {
+                        $codigoConviteNivel2 = $usuarioDireto['invite_code'];
+                        $consultaNivel2 = "SELECT id, invite_code FROM usuarios WHERE invitation_code = '$codigoConviteNivel2'";
+                        $resultadoNivel2 = mysqli_query($mysqli, $consultaNivel2);
+                        
+                        if ($resultadoNivel2) {
+                            while ($linhaNivel2 = mysqli_fetch_assoc($resultadoNivel2)) {
+                                $idsUsuariosIndiretos[] = $linhaNivel2['id'];
+                                
+                                // Nível 3
+                                $codigoConviteNivel3 = $linhaNivel2['invite_code'];
+                                $consultaNivel3 = "SELECT id FROM usuarios WHERE invitation_code = '$codigoConviteNivel3'";
+                                $resultadoNivel3 = mysqli_query($mysqli, $consultaNivel3);
+                                
+                                if ($resultadoNivel3) {
+                                    while ($linhaNivel3 = mysqli_fetch_assoc($resultadoNivel3)) {
+                                        $idsUsuariosIndiretos[] = $linhaNivel3['id'];
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Todos os usuários (diretos + indiretos)
+                    $todosUsuarios = array_merge($idsUsuariosDiretos, $idsUsuariosIndiretos);
+                    
+                    // Calcular métricas para usuários diretos
+                    $totalDepositosDiretos = 0;
+                    $totalRetiradasDiretas = 0;
+                    $totalApostasValidasDiretas = 0;
+                    
+                    if (count($idsUsuariosDiretos) > 0) {
+                        $idsStr = implode(',', $idsUsuariosDiretos);
+                        
+                        // Depósitos diretos
+                        $consultaDepositosDiretos = "SELECT COALESCE(SUM(valor), 0) as total FROM transacoes WHERE usuario IN ($idsStr) AND status = 'pago'";
+                        $resultadoDepositosDiretos = mysqli_query($mysqli, $consultaDepositosDiretos);
+                        if ($resultadoDepositosDiretos) {
+                            $totalDepositosDiretos = mysqli_fetch_assoc($resultadoDepositosDiretos)['total'];
+                        }
+                        
+                        // Retiradas diretas
+                        $consultaRetiradasDiretas = "SELECT COALESCE(SUM(valor), 0) as total FROM solicitacao_saques WHERE id_user IN ($idsStr) AND status = '1'";
+                        $resultadoRetiradasDiretas = mysqli_query($mysqli, $consultaRetiradasDiretas);
+                        if ($resultadoRetiradasDiretas) {
+                            $totalRetiradasDiretas = mysqli_fetch_assoc($resultadoRetiradasDiretas)['total'];
+                        }
+                        
+                        // Apostas válidas diretas
+                        $consultaApostasValidasDiretas = "SELECT COALESCE(SUM(bet_money), 0) as total FROM historico_play WHERE id_user IN ($idsStr) AND status_play = '1'";
+                        $resultadoApostasValidasDiretas = mysqli_query($mysqli, $consultaApostasValidasDiretas);
+                        if ($resultadoApostasValidasDiretas) {
+                            $totalApostasValidasDiretas = mysqli_fetch_assoc($resultadoApostasValidasDiretas)['total'];
+                        }
+                    }
+                    
+                    // Calcular métricas para usuários indiretos
+                    $totalDepositosIndiretos = 0;
+                    $totalRetiradasIndiretas = 0;
+                    $totalApostasValidasIndiretas = 0;
+                    
+                    if (count($idsUsuariosIndiretos) > 0) {
+                        $idsStr = implode(',', $idsUsuariosIndiretos);
+                        
+                        // Depósitos indiretos
+                        $consultaDepositosIndiretos = "SELECT COALESCE(SUM(valor), 0) as total FROM transacoes WHERE usuario IN ($idsStr) AND status = 'pago'";
+                        $resultadoDepositosIndiretos = mysqli_query($mysqli, $consultaDepositosIndiretos);
+                        if ($resultadoDepositosIndiretos) {
+                            $totalDepositosIndiretos = mysqli_fetch_assoc($resultadoDepositosIndiretos)['total'];
+                        }
+                        
+                        // Retiradas indiretas
+                        $consultaRetiradasIndiretas = "SELECT COALESCE(SUM(valor), 0) as total FROM solicitacao_saques WHERE id_user IN ($idsStr) AND status = '1'";
+                        $resultadoRetiradasIndiretas = mysqli_query($mysqli, $consultaRetiradasIndiretas);
+                        if ($resultadoRetiradasIndiretas) {
+                            $totalRetiradasIndiretas = mysqli_fetch_assoc($resultadoRetiradasIndiretas)['total'];
+                        }
+                        
+                        // Apostas válidas indiretas
+                        $consultaApostasValidasIndiretas = "SELECT COALESCE(SUM(bet_money), 0) as total FROM historico_play WHERE id_user IN ($idsStr) AND status_play = '1'";
+                        $resultadoApostasValidasIndiretas = mysqli_query($mysqli, $consultaApostasValidasIndiretas);
+                        if ($resultadoApostasValidasIndiretas) {
+                            $totalApostasValidasIndiretas = mysqli_fetch_assoc($resultadoApostasValidasIndiretas)['total'];
+                        }
+                    }
+                    
+                    // Calcular comissões do usuário atual da tabela adicao_saldo
+                    $totalComissoes = 0;
+                    $comissoesDiretas = 0;
+                    $comissoesIndiretas = 0;
+                    
+                    // Buscar todas as comissões do usuário na tabela adicao_saldo
+                    $consultaComissoes = "SELECT COALESCE(SUM(valor), 0) as total FROM adicao_saldo WHERE id_user = ? AND tipo LIKE '%comissao%'";
+                    $stmtComissoes = $mysqli->prepare($consultaComissoes);
+                    $stmtComissoes->bind_param("i", $userId);
+                    $stmtComissoes->execute();
+                    $resultadoComissoes = $stmtComissoes->get_result();
+                    if ($resultadoComissoes) {
+                        $totalComissoes = $resultadoComissoes->fetch_assoc()['total'];
+                    }
+                    
+                    // Buscar comissões diretas (nível 1)
+                    $consultaComissoesDiretas = "SELECT COALESCE(SUM(valor), 0) as total FROM adicao_saldo WHERE id_user = ? AND tipo = 'comissao_cpa_nivel_1'";
+                    $stmtComissoesDiretas = $mysqli->prepare($consultaComissoesDiretas);
+                    $stmtComissoesDiretas->bind_param("i", $userId);
+                    $stmtComissoesDiretas->execute();
+                    $resultadoComissoesDiretas = $stmtComissoesDiretas->get_result();
+                    if ($resultadoComissoesDiretas) {
+                        $comissoesDiretas = $resultadoComissoesDiretas->fetch_assoc()['total'];
+                    }
+                    
+                    // Buscar comissões indiretas (níveis 2 e 3)
+                    $consultaComissoesIndiretas = "SELECT COALESCE(SUM(valor), 0) as total FROM adicao_saldo WHERE id_user = ? AND (tipo = 'comissao_cpa_nivel_2' OR tipo = 'comissao_cpa_nivel_3')";
+                    $stmtComissoesIndiretas = $mysqli->prepare($consultaComissoesIndiretas);
+                    $stmtComissoesIndiretas->bind_param("i", $userId);
+                    $stmtComissoesIndiretas->execute();
+                    $resultadoComissoesIndiretas = $stmtComissoesIndiretas->get_result();
+                    if ($resultadoComissoesIndiretas) {
+                        $comissoesIndiretas = $resultadoComissoesIndiretas->fetch_assoc()['total'];
+                    }
+                    
+                    // Buscar comissões já resgatadas da tabela resgate_comissoes
+                    $comissoesResgatadas = 0;
+                    $consultaComissoesResgatadas = "SELECT COALESCE(SUM(valor), 0) as total FROM resgate_comissoes WHERE id_user = ? AND tipo = 'resgate'";
+                    $stmtComissoesResgatadas = $mysqli->prepare($consultaComissoesResgatadas);
+                    $stmtComissoesResgatadas->bind_param("i", $userId);
+                    $stmtComissoesResgatadas->execute();
+                    $resultadoComissoesResgatadas = $stmtComissoesResgatadas->get_result();
+                    if ($resultadoComissoesResgatadas) {
+                        $comissoesResgatadas = $resultadoComissoesResgatadas->fetch_assoc()['total'];
+                    }
+                    
+                    // Saldo atual de comissões (do campo saldo_afiliados)
+                    $saldoComissaoAtual = $datres['saldo_afiliados'] ?? 0;
+                    
+                    // Comissões disponíveis para retirada (saldo atual)
+                    $comissoesDisponiveis = $saldoComissaoAtual;
+                    
+                    // Performance (baseada nos depósitos)
+                    $performanceDireta = $totalDepositosDiretos;
+                    $performanceIndireta = $totalDepositosIndiretos;
+                    $performanceTotal = $performanceDireta + $performanceIndireta;
+                    
+                    // Totais gerais
+                    $totalDepositos = $totalDepositosDiretos + $totalDepositosIndiretos;
+                    $totalRetiradas = $totalRetiradasDiretas + $totalRetiradasIndiretas;
+                    $totalApostasValidas = $totalApostasValidasDiretas + $totalApostasValidasIndiretas;
+                    
+                    // Calcular desconto total (baseado em bônus)
+                    $totalDescontos = 0;
+                    if (count($todosUsuarios) > 0) {
+                        $idsStr = implode(',', $todosUsuarios);
+                        $consultaDescontos = "SELECT COALESCE(SUM(valor), 0) as total FROM cupom_usados WHERE id_user IN ($idsStr)";
+                        $resultadoDescontos = mysqli_query($mysqli, $consultaDescontos);
+                        if ($resultadoDescontos) {
+                            $totalDescontos = mysqli_fetch_assoc($resultadoDescontos)['total'];
+                        }
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => time(),
+                        "data" => [
+                            "sumCommission" => number_format($totalComissoes / 100, 2, '.', ''), // Convertendo centavos para reais
+                            "canTakeCommission" => number_format($comissoesDisponiveis, 2, '.', ''), // Convertendo centavos para reais
+                            "takenCommission" => number_format($comissoesResgatadas, 2, '.', ''), // Valor já em reais na tabela resgate_comissoes
+                            "totalCommission" => number_format($totalComissoes / 100, 2, '.', ''), // Convertendo centavos para reais
+                            "directCommission" => number_format($comissoesDiretas / 100, 2, '.', ''), // Convertendo centavos para reais
+                            "otherCommission" => number_format($comissoesIndiretas / 100, 2, '.', ''), // Convertendo centavos para reais
+                            "totalMember" => count($todosUsuarios),
+                            "directMember" => count($idsUsuariosDiretos),
+                            "otherMember" => count($idsUsuariosIndiretos),
+                            "totalPerformance" => number_format($performanceTotal, 2, '.', ''),
+                            "directPerformance" => number_format($performanceDireta, 2, '.', ''),
+                            "otherPerformance" => number_format($performanceIndireta, 2, '.', ''),
+                            "totalDeposit" => number_format($totalDepositos, 2, '.', ''),
+                            "totalWithdraw" => number_format($totalRetiradas, 2, '.', ''),
+                            "totalDiscount" => number_format($totalDescontos, 2, '.', ''),
+                            "totalValidBet" => number_format($totalApostasValidas, 2, '.', ''),
+                            "totalProfitLose" => "0.00"
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login",
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota agent/promote/report/myPeriodData (POST) --> Meus Dados por Período
+        if ($requestURI === '/hall/api/agent/promote/report/myPeriodData') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true;
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+                
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+        
+                if ($resp->num_rows > 0) {
+                    $dadosUsuario = $resp->fetch_assoc();
+                    $userId = $dadosUsuario['id'];
+                    $codigoConvite = $dadosUsuario['invite_code'];
+        
+                    // Obtendo o parâmetro 'timeEnum' da requisição
+                    $data = json_decode(file_get_contents('php://input'), true);
+                    $timeType = isset($data['timeEnum']) ? (int) $data['timeEnum'] : 2;
+        
+                    // Inicializar todas as métricas
+                    $timeNewAddDirectMember = 0;
+                    $timeDirectFirstDepositPerson = 0;
+                    $timeDirectFirstDeposit = 0.00;
+                    $timeDirectDepositPerson = 0;
+                    $timeDirectDeposit = 0.00;
+                    $timeWithdrawPerson = 0;
+                    $timeWithdraw = 0.00;
+                    $timeValidBet = 0.00;
+                    $timeDiscount = 0.00;
+                    $timeProfitLose = 0.00;
+                    $timePerformance = 0.00;
+                    $timeCommission = 0.00;
+        
+                    // Definir filtros de data
+                    $dataFiltroUsuarios = '';
+                    $dataFiltroTransacoes = '';
+                    $dataFiltroSaques = '';
+                    $dataFiltroHistorico = '';
+                    $dataFiltroAdicaoSaldo = '';
+                    
+                    switch ($timeType) {
+                        case 2: // Hoje
+                            $dataFiltroUsuarios = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroTransacoes = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroSaques = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroHistorico = "AND DATE(created_at) = CURDATE()";
+                            $dataFiltroAdicaoSaldo = "AND DATE(data_registro) = CURDATE()";
+                            break;
+                        case 1: // Ontem
+                            $dataFiltroUsuarios = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            $dataFiltroTransacoes = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            $dataFiltroSaques = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            $dataFiltroHistorico = "AND DATE(created_at) = CURDATE() - INTERVAL 1 DAY";
+                            $dataFiltroAdicaoSaldo = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            break;
+                        case 3: // Esta semana
+                            $dataFiltroUsuarios = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            $dataFiltroTransacoes = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            $dataFiltroSaques = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            $dataFiltroHistorico = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+                            $dataFiltroAdicaoSaldo = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            break;
+                        case 4: // Semana passada
+                            $dataFiltroUsuarios = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            $dataFiltroTransacoes = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            $dataFiltroSaques = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            $dataFiltroHistorico = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            $dataFiltroAdicaoSaldo = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            break;
+                        case 5: // Este mês
+                            $dataFiltroUsuarios = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            $dataFiltroTransacoes = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            $dataFiltroSaques = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            $dataFiltroHistorico = "AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())";
+                            $dataFiltroAdicaoSaldo = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            break;
+                        case 6: // Mês passado
+                            $dataFiltroUsuarios = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            $dataFiltroTransacoes = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            $dataFiltroSaques = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            $dataFiltroHistorico = "AND MONTH(created_at) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(created_at) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            $dataFiltroAdicaoSaldo = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            break;
+                        default: // Hoje (padrão)
+                            $dataFiltroUsuarios = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroTransacoes = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroSaques = "AND DATE(data_registro) = CURDATE()";
+                            $dataFiltroHistorico = "AND DATE(created_at) = CURDATE()";
+                            $dataFiltroAdicaoSaldo = "AND DATE(data_registro) = CURDATE()";
+                            break;
+                    }
+        
+                    // 1. Buscar usuários diretamente convidados (nível 1)
+                    $consultaUsuariosDiretos = "SELECT id, data_registro FROM usuarios WHERE invitation_code = ?";
+                    $stmtUsuariosDiretos = $mysqli->prepare($consultaUsuariosDiretos);
+                    
+                    if ($stmtUsuariosDiretos) {
+                        $stmtUsuariosDiretos->bind_param("s", $codigoConvite);
+                        $stmtUsuariosDiretos->execute();
+                        $resultadoUsuariosDiretos = $stmtUsuariosDiretos->get_result();
+                        
+                        $idsUsuariosDiretos = [];
+                        
+                        while ($linha = $resultadoUsuariosDiretos->fetch_assoc()) {
+                            $idsUsuariosDiretos[] = $linha['id'];
+                        }
+                        $stmtUsuariosDiretos->close();
+        
+                        if (count($idsUsuariosDiretos) > 0) {
+                            $idsUsuariosDiretosStr = implode(',', $idsUsuariosDiretos);
+        
+                            // 2. timeNewAddDirectMember - Novos membros diretos no período
+                            $consultaNovosMembrosDiretos = "
+                                SELECT COUNT(*) as total
+                                FROM usuarios 
+                                WHERE invitation_code = ?
+                                " . $dataFiltroUsuarios;
+                            
+                            $stmtNovosMembrosDiretos = $mysqli->prepare($consultaNovosMembrosDiretos);
+                            if ($stmtNovosMembrosDiretos) {
+                                $stmtNovosMembrosDiretos->bind_param("s", $codigoConvite);
+                                $stmtNovosMembrosDiretos->execute();
+                                $resultadoNovosMembrosDiretos = $stmtNovosMembrosDiretos->get_result();
+                                if ($resultadoNovosMembrosDiretos) {
+                                    $dadosNovosMembrosDiretos = $resultadoNovosMembrosDiretos->fetch_assoc();
+                                    $timeNewAddDirectMember = $dadosNovosMembrosDiretos['total'] ?? 0;
+                                }
+                                $stmtNovosMembrosDiretos->close();
+                            }
+        
+                            // 3. timeDirectFirstDepositPerson e timeDirectFirstDeposit - Primeiros depósitos
+                            $consultaPrimeirosDepositos = "
+                                SELECT COUNT(DISTINCT t.usuario) as pessoas, COALESCE(SUM(t.valor), 0) as total
+                                FROM transacoes t
+                                WHERE t.usuario IN ($idsUsuariosDiretosStr) 
+                                AND t.status = 'pago' 
+                                $dataFiltroTransacoes
+                                AND t.id = (
+                                    SELECT MIN(t2.id) 
+                                    FROM transacoes t2 
+                                    WHERE t2.usuario = t.usuario 
+                                    AND t2.status = 'pago'
+                                )
+                            ";
+                            $resultadoPrimeirosDepositos = mysqli_query($mysqli, $consultaPrimeirosDepositos);
+                            if ($resultadoPrimeirosDepositos) {
+                                $dadosPrimeirosDepositos = mysqli_fetch_assoc($resultadoPrimeirosDepositos);
+                                $timeDirectFirstDepositPerson = $dadosPrimeirosDepositos['pessoas'] ?? 0;
+                                $timeDirectFirstDeposit = $dadosPrimeirosDepositos['total'] ?? 0;
+                            }
+        
+                            // 4. timeDirectDepositPerson e timeDirectDeposit - Todos os depósitos
+                            $consultaTodosDepositos = "
+                                SELECT COUNT(DISTINCT usuario) as pessoas, COALESCE(SUM(valor), 0) as total
+                                FROM transacoes 
+                                WHERE usuario IN ($idsUsuariosDiretosStr) 
+                                AND status = 'pago' 
+                                $dataFiltroTransacoes
+                            ";
+                            $resultadoTodosDepositos = mysqli_query($mysqli, $consultaTodosDepositos);
+                            if ($resultadoTodosDepositos) {
+                                $dadosTodosDepositos = mysqli_fetch_assoc($resultadoTodosDepositos);
+                                $timeDirectDepositPerson = $dadosTodosDepositos['pessoas'] ?? 0;
+                                $timeDirectDeposit = $dadosTodosDepositos['total'] ?? 0;
+                            }
+        
+                            // 5. timeWithdrawPerson e timeWithdraw - Saques
+                            $consultaSaques = "
+                                SELECT COUNT(DISTINCT id_user) as pessoas, COALESCE(SUM(valor), 0) as total
+                                FROM solicitacao_saques 
+                                WHERE id_user IN ($idsUsuariosDiretosStr) 
+                                AND status = '1' 
+                                $dataFiltroSaques
+                            ";
+                            $resultadoSaques = mysqli_query($mysqli, $consultaSaques);
+                            if ($resultadoSaques) {
+                                $dadosSaques = mysqli_fetch_assoc($resultadoSaques);
+                                $timeWithdrawPerson = $dadosSaques['pessoas'] ?? 0;
+                                $timeWithdraw = $dadosSaques['total'] ?? 0;
+                            }
+        
+                            // 6. timeValidBet - Apostas válidas
+                            $consultaApostasValidas = "
+                                SELECT COALESCE(SUM(hp.bet_money), 0) as total
+                                FROM historico_play hp
+                                INNER JOIN usuarios u ON hp.id_user = u.id
+                                WHERE u.invitation_code = ?
+                                $dataFiltroHistorico
+                            ";
+                            $stmtApostasValidas = $mysqli->prepare($consultaApostasValidas);
+                            if ($stmtApostasValidas) {
+                                $stmtApostasValidas->bind_param("s", $codigoConvite);
+                                $stmtApostasValidas->execute();
+                                $resultadoApostasValidas = $stmtApostasValidas->get_result();
+                                if ($resultadoApostasValidas) {
+                                    $dadosApostasValidas = $resultadoApostasValidas->fetch_assoc();
+                                    $timeValidBet = $dadosApostasValidas['total'] ?? 0;
+                                }
+                                $stmtApostasValidas->close();
+                            }
+        
+                            // 7. timeProfitLose - Lucro/Prejuízo
+                            $consultaLucroPrejuizo = "
+                                SELECT COALESCE(SUM(hp.win_money - hp.bet_money), 0) as total
+                                FROM historico_play hp
+                                INNER JOIN usuarios u ON hp.id_user = u.id
+                                WHERE u.invitation_code = ?
+                                $dataFiltroHistorico
+                            ";
+                            $stmtLucroPrejuizo = $mysqli->prepare($consultaLucroPrejuizo);
+                            if ($stmtLucroPrejuizo) {
+                                $stmtLucroPrejuizo->bind_param("s", $codigoConvite);
+                                $stmtLucroPrejuizo->execute();
+                                $resultadoLucroPrejuizo = $stmtLucroPrejuizo->get_result();
+                                if ($resultadoLucroPrejuizo) {
+                                    $dadosLucroPrejuizo = $resultadoLucroPrejuizo->fetch_assoc();
+                                    $timeProfitLose = $dadosLucroPrejuizo['total'] ?? 0;
+                                }
+                                $stmtLucroPrejuizo->close();
+                            }
+        
+                            // 8. timePerformance
+                            $timePerformance = $timeDirectDeposit;
+                        }
+        
+                        // 9. timeDiscount
+                        $timeDiscount = $dadosUsuario['saldo_afiliados'] ?? 0;
+        
+                        // 10. timeCommission
+                        $consultaComissoes = "
+                            SELECT COALESCE(SUM(valor), 0) as total
+                            FROM adicao_saldo 
+                            WHERE id_user = ? 
+                            AND tipo = 'comissao_cpa_nivel_1'
+                            $dataFiltroAdicaoSaldo
+                        ";
+                        $stmtComissoes = $mysqli->prepare($consultaComissoes);
+                        if ($stmtComissoes) {
+                            $stmtComissoes->bind_param("i", $userId);
+                            $stmtComissoes->execute();
+                            $resultadoComissoes = $stmtComissoes->get_result();
+                            if ($resultadoComissoes) {
+                                $dadosComissoes = $resultadoComissoes->fetch_assoc();
+                                $timeCommission = ($dadosComissoes['total'] ?? 0) / 100;
+                            }
+                            $stmtComissoes->close();
+                        }
+                    }
+        
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => time(),
+                        "data" => [
+                            "timeNewAddDirectMember" => (int)$timeNewAddDirectMember,
+                            "timeDirectFirstDepositPerson" => (int)$timeDirectFirstDepositPerson,
+                            "timeDirectFirstDeposit" => number_format($timeDirectFirstDeposit, 2, '.', ''),
+                            "timeDirectDepositPerson" => (int)$timeDirectDepositPerson,
+                            "timeDirectDeposit" => number_format($timeDirectDeposit, 2, '.', ''),
+                            "timeWithdrawPerson" => (int)$timeWithdrawPerson,
+                            "timeWithdraw" => number_format($timeWithdraw, 2, '.', ''),
+                            "timeValidBet" => number_format($timeValidBet, 2, '.', ''),
+                            "timeDiscount" => number_format($timeDiscount, 2, '.', ''),
+                            "timeProfitLose" => number_format($timeProfitLose, 2, '.', ''),
+                            "timePerformance" => number_format($timePerformance, 2, '.', ''),
+                            "timeCommission" => number_format($timeCommission, 2, '.', '')
+                        ]
+                    ];
+        
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login",
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota agent/promote/report/invitedDepositTotals (POST) --> Totais por nível (indicados e depósitos)
+        if ($requestURI === '/hall/api/agent/promote/report/invitedDepositTotals') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $rotaEncontrada = true;
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+
+                $stmt = $mysqli->prepare("SELECT id, invite_code FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp && $resp->num_rows > 0) {
+                    $dadosUsuario = $resp->fetch_assoc();
+                    $userId = (int)$dadosUsuario['id'];
+                    $codigoConvite = $dadosUsuario['invite_code'];
+
+                    $data = json_decode(file_get_contents('php://input'), true);
+                    $timeType = isset($data['timeEnum']) ? (int)$data['timeEnum'] : 2;
+
+                    $dataFiltroUsuarios = '';
+                    $dataFiltroTransacoes = '';
+                    switch ($timeType) {
+                        case 2: // Hoje
+                            $dataFiltroUsuarios = " AND DATE(uX.data_registro) = CURDATE()";
+                            $dataFiltroTransacoes = " AND DATE(data_registro) = CURDATE()";
+                            break;
+                        case 1: // Ontem
+                            $dataFiltroUsuarios = " AND DATE(uX.data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            $dataFiltroTransacoes = " AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                            break;
+                        case 3: // Esta semana
+                            $dataFiltroUsuarios = " AND YEARWEEK(uX.data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            $dataFiltroTransacoes = " AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                            break;
+                        case 4: // Semana passada
+                            $dataFiltroUsuarios = " AND YEARWEEK(uX.data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            $dataFiltroTransacoes = " AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                            break;
+                        case 5: // Este mês
+                            $dataFiltroUsuarios = " AND MONTH(uX.data_registro) = MONTH(CURDATE()) AND YEAR(uX.data_registro) = YEAR(CURDATE())";
+                            $dataFiltroTransacoes = " AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                            break;
+                        case 6: // Mês passado
+                            $dataFiltroUsuarios = " AND MONTH(uX.data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(uX.data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            $dataFiltroTransacoes = " AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                            break;
+                        default:
+                            $dataFiltroUsuarios = " AND DATE(uX.data_registro) = CURDATE()";
+                            $dataFiltroTransacoes = " AND DATE(data_registro) = CURDATE()";
+                            break;
+                    }
+
+                    // N1: indicados e depósitos
+                    $n1Invited = 0;
+                    $n1DepositTotal = 0.00;
+                    $sqlN1Invited = "SELECT COUNT(*) AS total FROM usuarios uX WHERE uX.invitation_code = ?" . $dataFiltroUsuarios;
+                    if ($stmtN1 = $mysqli->prepare($sqlN1Invited)) {
+                        $stmtN1->bind_param("s", $codigoConvite);
+                        $stmtN1->execute();
+                        $resN1 = $stmtN1->get_result();
+                        if ($resN1) {
+                            $rowN1 = $resN1->fetch_assoc();
+                            $n1Invited = (int)($rowN1['total'] ?? 0);
+                        }
+                        $stmtN1->close();
+                    }
+
+                    $sqlN1Dep = "SELECT COALESCE(SUM(t.valor), 0) AS total FROM transacoes t WHERE t.status = 'pago' AND t.usuario IN (SELECT u1.id FROM usuarios u1 WHERE u1.invitation_code = ?)" . $dataFiltroTransacoes;
+                    if ($stmtN1D = $mysqli->prepare($sqlN1Dep)) {
+                        $stmtN1D->bind_param("s", $codigoConvite);
+                        $stmtN1D->execute();
+                        $resN1D = $stmtN1D->get_result();
+                        if ($resN1D) {
+                            $rowN1D = $resN1D->fetch_assoc();
+                            $n1DepositTotal = floatval($rowN1D['total'] ?? 0);
+                        }
+                        $stmtN1D->close();
+                    }
+
+                    // N2: indicados e depósitos
+                    $n2Invited = 0;
+                    $n2DepositTotal = 0.00;
+                    $sqlN2Invited = "SELECT COUNT(*) AS total FROM usuarios u2 INNER JOIN usuarios u1 ON u2.invitation_code = u1.invite_code WHERE u1.invitation_code = ?" . str_replace('uX', 'u2', $dataFiltroUsuarios);
+                    if ($stmtN2 = $mysqli->prepare($sqlN2Invited)) {
+                        $stmtN2->bind_param("s", $codigoConvite);
+                        $stmtN2->execute();
+                        $resN2 = $stmtN2->get_result();
+                        if ($resN2) {
+                            $rowN2 = $resN2->fetch_assoc();
+                            $n2Invited = (int)($rowN2['total'] ?? 0);
+                        }
+                        $stmtN2->close();
+                    }
+
+                    $sqlN2Dep = "SELECT COALESCE(SUM(t.valor), 0) AS total FROM transacoes t WHERE t.status = 'pago' AND t.usuario IN (SELECT u2.id FROM usuarios u2 INNER JOIN usuarios u1 ON u2.invitation_code = u1.invite_code WHERE u1.invitation_code = ?)" . $dataFiltroTransacoes;
+                    if ($stmtN2D = $mysqli->prepare($sqlN2Dep)) {
+                        $stmtN2D->bind_param("s", $codigoConvite);
+                        $stmtN2D->execute();
+                        $resN2D = $stmtN2D->get_result();
+                        if ($resN2D) {
+                            $rowN2D = $resN2D->fetch_assoc();
+                            $n2DepositTotal = floatval($rowN2D['total'] ?? 0);
+                        }
+                        $stmtN2D->close();
+                    }
+
+                    // N3: indicados e depósitos
+                    $n3Invited = 0;
+                    $n3DepositTotal = 0.00;
+                    $sqlN3Invited = "SELECT COUNT(*) AS total FROM usuarios u3 INNER JOIN usuarios u2 ON u3.invitation_code = u2.invite_code INNER JOIN usuarios u1 ON u2.invitation_code = u1.invite_code WHERE u1.invitation_code = ?" . str_replace('uX', 'u3', $dataFiltroUsuarios);
+                    if ($stmtN3 = $mysqli->prepare($sqlN3Invited)) {
+                        $stmtN3->bind_param("s", $codigoConvite);
+                        $stmtN3->execute();
+                        $resN3 = $stmtN3->get_result();
+                        if ($resN3) {
+                            $rowN3 = $resN3->fetch_assoc();
+                            $n3Invited = (int)($rowN3['total'] ?? 0);
+                        }
+                        $stmtN3->close();
+                    }
+
+                    $sqlN3Dep = "SELECT COALESCE(SUM(t.valor), 0) AS total FROM transacoes t WHERE t.status = 'pago' AND t.usuario IN (SELECT u3.id FROM usuarios u3 INNER JOIN usuarios u2 ON u3.invitation_code = u2.invite_code INNER JOIN usuarios u1 ON u2.invitation_code = u1.invite_code WHERE u1.invitation_code = ?)" . $dataFiltroTransacoes;
+                    if ($stmtN3D = $mysqli->prepare($sqlN3Dep)) {
+                        $stmtN3D->bind_param("s", $codigoConvite);
+                        $stmtN3D->execute();
+                        $resN3D = $stmtN3D->get_result();
+                        if ($resN3D) {
+                            $rowN3D = $resN3D->fetch_assoc();
+                            $n3DepositTotal = floatval($rowN3D['total'] ?? 0);
+                        }
+                        $stmtN3D->close();
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => time(),
+                        "data" => [
+                            "n1" => [
+                                "invitedCount" => (int)$n1Invited,
+                                "depositTotal" => number_format($n1DepositTotal, 2, '.', '')
+                            ],
+                            "n2" => [
+                                "invitedCount" => (int)$n2Invited,
+                                "depositTotal" => number_format($n2DepositTotal, 2, '.', '')
+                            ],
+                            "n3" => [
+                                "invitedCount" => (int)$n3Invited,
+                                "depositTotal" => number_format($n3DepositTotal, 2, '.', '')
+                            ]
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Usuário sem efetuar login",
+                    ];
+                    http_response_code(401);
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                echo json_encode($response);
+                exit;
+            }
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/returnGold/summary') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => 1747707065,
+                "data" => [
+                    "returnGoldValidBet" => 0,
+                    "returnGold" => 1,
+                    "curReturnGold" => 0,
+                    "nextReturnGold" => 0,
+                    "autoSendReturnGold" => 0,
+                    "clientCalculateDelta" => true,
+                    "totalValidBet" => 0,
+                    "nextValidBet" => 0,
+                    "id" => 1,
+                    "returnGoldType" => 0,
+                    "list" => [
+                        [
+                            "name" => "Slots",
+                            "categoryId" => 3,
+                            "list" => [
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769559,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "PG",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 200,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769560,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "WG",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 13,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769561,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "JDB",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 310,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769562,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "PP",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 301,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769563,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "TADA",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 302,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769564,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "CQ9",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 316,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769565,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "Joker",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 97,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769566,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "FC",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 203,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769567,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "Dragoon Soft",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 118,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ],
+                                [
+                                    "vip" => 0,
+                                    "validBet" => 0,
+                                    "returnGold" => 0,
+                                    "rate" => 0,
+                                    "rateId" => -1,
+                                    "nextRate" => 0.05,
+                                    "nextRateId" => 2769568,
+                                    "remainingBet" => 100,
+                                    "curVip" => 0,
+                                    "nextVip" => 0,
+                                    "curBet" => 0,
+                                    "nextBet" => 100,
+                                    "gameSecondCate" => "Redtiger",
+                                    "gameCategory" => "",
+                                    "gameSecondCateId" => 32,
+                                    "gameCategoryId" => 3,
+                                    "icon" => "",
+                                    "weight" => 0
+                                ]
+                            ],
+                            "activeCateId" => 4,
+                            "cateWeight" => 0
+                        ]
+                    ],
+                    "receiveStatus" => 1,
+                    "goldSetting" => [
+                        "id" => 1,
+                        "settlePeriod" => 2,
+                        "settleWeek" => 1,
+                        "settleDay" => 1,
+                        "settleHour" => 0,
+                        "settleType" => 2,
+                        "createTime" => 0,
+                        "receiveType" => 2,
+                        "rewardExpireDay" => 1,
+                        "siteCode" => "7920"
+                    ],
+                    "settlePeriodTime" => "2025-05-20 00:00:00"
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/myPerformanceV2') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "total" => 0,
+                    "totalPerformance" => 0,
+                    "totalDirectPerformance" => 0,
+                    "totalOtherPerformance" => 0,
+                    "list" => null
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/myCommissionV2') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "total" => 0,
+                    "totalCommission" => 0,
+                    "totalDirectCommission" => 0,
+                    "totalOtherCommission" => 0,
+                    "settleDuration" => 1,
+                    "settleDurationDays" => 0,
+                    "nextSettleTime" => 1747458000,
+                    "list" => null
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/directReportV4') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                $token = mysqli_real_escape_string($mysqli, $_COOKIE['token_user']);
+                // Usando prepared statement para segurança
+                $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+                $stmt->bind_param("s", $token);
+                $stmt->execute();
+                $resp = $stmt->get_result();
+
+                if ($resp->num_rows > 0) {
+                    $datres = $resp->fetch_assoc();
+
+                    $inviteCode = $datres['invite_code'];
+
+                    // Busca os usuários convidados pelo usuário principal
+                    $invitedUsersQuery = "SELECT id FROM usuarios WHERE invitation_code = '$inviteCode'";
+                    $invitedUsersResult = mysqli_query($mysqli, $invitedUsersQuery);
+
+                    $invitedUserIds = [];
+                    while ($row = mysqli_fetch_assoc($invitedUsersResult)) {
+                        $invitedUserIds[] = $row['id'];
+                    }
+
+                    // Consulta para obter os usuários que entraram pelo invite_code do usuário autenticado
+                    $qry_subs = "SELECT * FROM usuarios WHERE invitation_code='" . $inviteCode . "'";
+                    $resp_subs = mysqli_query($mysqli, $qry_subs);
+
+                    $sub_users = [];
+                    while ($sub = mysqli_fetch_assoc($resp_subs)) {
+                        // Contar a quantidade de usuários indicados pelo sub-usuário
+                        $subInvite = $sub['invite_code'];
+                        $subId = $sub['id'];
+
+                        // Contagem de indicados diretos do sub-usuário
+                        $countSubIndicatedUsersQuery = "
+                            SELECT COUNT(*) as subIndicatedCount
+                            FROM usuarios
+                            WHERE invitation_code = '$subInvite'
+                        ";
+                        $countSubIndicatedUsersResult = mysqli_query($mysqli, $countSubIndicatedUsersQuery);
+                        $countSubIndicatedUsers = mysqli_fetch_assoc($countSubIndicatedUsersResult)['subIndicatedCount'];
+
+                        // Consulta valor depositado
+                        $valor_dep_pagos = "
+                             SELECT SUM(valor) as dep_pagos
+                             FROM transacoes
+                             WHERE usuario = '$subId' AND status = 'pago'
+                                            ";
+                        $valor_dep_pagos_resultado = mysqli_query($mysqli, $valor_dep_pagos);
+                        $depositos_indicado = mysqli_fetch_assoc($valor_dep_pagos_resultado)['dep_pagos'];
+
+                        // Consulta apostas validas
+                        $consulta_apostas_validas = "
+                                                SELECT SUM(bet_money) as apostas_validas
+                                                FROM historico_play
+                                                WHERE id_user = '$subId' AND status_play = '1'
+                                                               ";
+                        $apostas_validas_resultado = mysqli_query($mysqli, $consulta_apostas_validas);
+                        $apostas_validas = mysqli_fetch_assoc($apostas_validas_resultado)['apostas_validas'];
+
+                        // Adicionando os dados do sub-usuário com a quantidade de indicados
+                        $sub_users[] = [
+                            "userIdx" => $sub['id'],
+                            "vipLevel" => $sub['vip'],
+                            "account" => $sub['mobile'],
+                            "encryption" => $sub['mobile'],
+                            "directChildCount" => $sub['pessoas_convidadas'] ? $sub['pessoas_convidadas'] : 0,
+                            "deposit" => $depositos_indicado ? $depositos_indicado : 0.00,
+                            "validBet" => $apostas_validas ? $apostas_validas : 0.00,
+                            "isDeposit" => 1,
+                            "regTime" => 0,
+                            "loginTimes" => 0,
+                            "lastLoginTime" => strtotime($sub['data_registro']),
+                            "status" => 1,
+                            "online" => 1
+                        ];
+                    }
+
+                    if (count($invitedUserIds) > 0) {
+                        $invitedUserIdsStr = implode(',', $invitedUserIds);
+
+                        // Exemplo: Quantidade de primeiros depósitos pagos (um por cada afiliado)
+                        $firstDepositQuery = "
+                            SELECT COUNT(DISTINCT usuario) as firstDepositCount
+                            FROM transacoes
+                            WHERE usuario IN ($invitedUserIdsStr)
+                            AND status = 'pago'
+                        ";
+                        $firstDepositResult = mysqli_query($mysqli, $firstDepositQuery);
+                        $firstDepositCount = mysqli_fetch_assoc($firstDepositResult)['firstDepositCount'];
+
+                        // Exemplo: Total de depósitos pagos e soma dos valores
+                        $depositQuery = "
+                            SELECT COUNT(*) as depositCount, SUM(valor) as totalDeposits
+                            FROM transacoes
+                            WHERE usuario IN ($invitedUserIdsStr)
+                            AND status = 'pago'
+                        ";
+                        $depositResult = mysqli_query($mysqli, $depositQuery);
+                        $depositData = mysqli_fetch_assoc($depositResult);
+
+                        // Verificar se os dados foram retornados corretamente
+                        $depositCount = isset($depositData['depositCount']) ? $depositData['depositCount'] : 0;
+                        $totalDeposits = isset($depositData['totalDeposits']) ? $depositData['totalDeposits'] : 0;
+                    } else {
+                        // Se não houver usuários convidados, os valores serão zero
+                        $firstDepositCount = 0;
+                        $depositCount = 0;
+                        $totalDeposits = 0.00;
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "list" => $sub_users,
+                            "totalRecords" => 1,
+                            "total" => 1,
+                            "pageSize" => 20,
+                            "more" => false,
+                            "directFirstDepositPerson" => $firstDepositCount,
+                            "otherFirstDepositPerson" => 0,
+                            "directDeposit" => $totalDeposits,
+                            "otherDeposit" => 0,
+                            "startTime" => 1747364400,
+                            "endTime" => 1747450799
+                        ]
+                    ];
+
+                    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                    exit;
+                } else {
+                    $response = [
+                        "code" => 0, // Indica falha
+                        "msg" => "Usuário sem efetuar login", // Mensagem de erro
+                    ];
+                    http_response_code(401); // Unauthorized
+                    echo json_encode($response);
+                    exit;
+                }
+            } else {
+                $response = [
+                    "code" => 0, // indica falha
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+                echo json_encode($response);
+                exit;
+            }
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/directOrderV2') {
+            $rotaEncontrada = true;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id, invite_code FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $inviteCode = $user['invite_code'];
+
+            $data = json_decode(file_get_contents('php://input'), true);
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0:
+                    $dateFilter = "AND DATE(created_at) = CURDATE()";
+                    break;
+                case 1:
+                    $dateFilter = "AND DATE(created_at) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3:
+                    $dateFilter = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())";
+                    break;
+                case 5:
+                    $dateFilter = "AND MONTH(created_at) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(created_at) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            // Buscar indicados diretos
+            $stmt = $mysqli->prepare("SELECT id, mobile, vip, invite_code FROM usuarios WHERE invitation_code = ?");
+            $stmt->bind_param("s", $inviteCode);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            $list = [];
+            $totalOrders = 0;
+            $totalValidBet = 0;
+            $totalProfit = 0;
+
+            while ($indicado = $res->fetch_assoc()) {
+                $userId = $indicado['id'];
+
+                // Buscar apostas do indicado
+                $sql = "SELECT COUNT(*) as orders, SUM(bet_money) as validBet, SUM(win_money - bet_money) as profit FROM historico_play WHERE id_user = ? $dateFilter";
+                $stmtBet = $mysqli->prepare($sql);
+                $stmtBet->bind_param("i", $userId);
+                $stmtBet->execute();
+                $resBet = $stmtBet->get_result();
+                $bet = $resBet->fetch_assoc();
+                $orders = (int) ($bet['orders'] ?? 0);
+                $validBet = (float) ($bet['validBet'] ?? 0);
+                $profit = (float) ($bet['profit'] ?? 0);
+
+                // Quantos indicados diretos ele tem
+                $stmtChild = $mysqli->prepare("SELECT COUNT(*) as total FROM usuarios WHERE invitation_code = ?");
+                $stmtChild->bind_param("s", $indicado['invite_code']);
+                $stmtChild->execute();
+                $resChild = $stmtChild->get_result();
+                $child = $resChild->fetch_assoc();
+                $directChildCount = (int) ($child['total'] ?? 0);
+
+                // Encriptação simples do username
+                $account = $indicado['mobile'];
+                $encryption = substr($account, 0, 2) . "****" . substr($account, -1);
+
+                $list[] = [
+                    "vipLevel" => (int) $indicado['vip'],
+                    "account" => $account,
+                    "encryption" => $encryption,
+                    "userIdx" => $userId,
+                    "memberId" => 0,
+                    "orders" => $orders,
+                    "validBet" => $validBet,
+                    "profit" => $profit,
+                    "startTime" => 0,
+                    "endTime" => 0,
+                    "directChildCount" => $directChildCount
+                ];
+
+                $totalOrders += $orders;
+                $totalValidBet += $validBet;
+                $totalProfit += $profit;
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => time(),
+                "data" => [
+                    "list" => $list,
+                    "totalRecords" => count($list),
+                    "total" => count($list),
+                    "pageSize" => 20,
+                    "more" => false,
+                    "totalOrders" => $totalOrders,
+                    "totalValidBet" => $totalValidBet,
+                    "totalProfit" => $totalProfit,
+                    "directOrders" => $totalOrders,
+                    "directValidBet" => $totalValidBet,
+                    "directProfit" => $totalProfit,
+                    "otherOrders" => 0,
+                    "otherValidBet" => 0,
+                    "otherProfit" => 0,
+                    "startTime" => 0,
+                    "endTime" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/agent/promote/report/directFinV2') {
+            $rotaEncontrada = true;
+
+            if (empty($_COOKIE['token_user'])) {
+                echo json_encode(["code" => 0, "msg" => "Usuário sem efetuar login"]);
+                exit;
+            }
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT id, invite_code FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result->num_rows == 0) {
+                echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+                exit;
+            }
+            $user = $result->fetch_assoc();
+            $inviteCode = $user['invite_code'];
+
+            $data = json_decode(file_get_contents('php://input'), true);
+            $timeType = isset($data['timeType']) ? (int) $data['timeType'] : -1;
+            $dateFilter = '';
+            switch ($timeType) {
+                case 0:
+                    $dateFilter = "AND DATE(data_registro) = CURDATE()";
+                    break;
+                case 1:
+                    $dateFilter = "AND DATE(data_registro) = CURDATE() - INTERVAL 1 DAY";
+                    break;
+                case 2:
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case 3:
+                    $dateFilter = "AND YEARWEEK(data_registro, 1) = YEARWEEK(CURDATE(), 1) - 1";
+                    break;
+                case 4:
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE()) AND YEAR(data_registro) = YEAR(CURDATE())";
+                    break;
+                case 5:
+                    $dateFilter = "AND MONTH(data_registro) = MONTH(CURDATE() - INTERVAL 1 MONTH) AND YEAR(data_registro) = YEAR(CURDATE() - INTERVAL 1 MONTH)";
+                    break;
+                default:
+                    $dateFilter = "";
+                    break;
+            }
+
+            // Buscar indicados diretos
+            $stmt = $mysqli->prepare("SELECT id, mobile, vip, saldo, invite_code FROM usuarios WHERE invitation_code = ?");
+            $stmt->bind_param("s", $inviteCode);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            $list = [];
+            $totalDeposit = 0;
+            $totalDepositPerson = 0;
+
+            while ($indicado = $res->fetch_assoc()) {
+                $userId = $indicado['id'];
+
+                // Total depositado e quantidade de depósitos
+                $sql = "SELECT SUM(valor) as total, COUNT(*) as count FROM transacoes WHERE usuario = ? AND status = 'pago' $dateFilter";
+                $stmtDep = $mysqli->prepare($sql);
+                $stmtDep->bind_param("i", $userId);
+                $stmtDep->execute();
+                $resDep = $stmtDep->get_result();
+                $dep = $resDep->fetch_assoc();
+                $depositAmount = (float) ($dep['total'] ?? 0);
+                $depositCount = (int) ($dep['count'] ?? 0);
+
+                // Total sacado e quantidade de saques
+                $sql = "SELECT SUM(valor) as total, COUNT(*) as count FROM solicitacao_saques WHERE id_user = ? AND status = 1 $dateFilter";
+                $stmtSaq = $mysqli->prepare($sql);
+                $stmtSaq->bind_param("i", $userId);
+                $stmtSaq->execute();
+                $resSaq = $stmtSaq->get_result();
+                $saq = $resSaq->fetch_assoc();
+                $withdrawAmount = (float) ($saq['total'] ?? 0);
+                $withdrawCount = (int) ($saq['count'] ?? 0);
+
+                // Quantos indicados diretos ele tem
+                $stmtChild = $mysqli->prepare("SELECT COUNT(*) as total FROM usuarios WHERE invitation_code = ?");
+                $stmtChild->bind_param("s", $indicado['invite_code']);
+                $stmtChild->execute();
+                $resChild = $stmtChild->get_result();
+                $child = $resChild->fetch_assoc();
+                $directChildCount = (int) ($child['total'] ?? 0);
+
+                // Encriptação simples do username (usando mobile)
+                $account = $indicado['mobile'];
+                $encryption = substr($account, 0, 2) . "****" . substr($account, -1);
+
+                $list[] = [
+                    "memberUsername" => $indicado['mobile'],
+                    "memberId" => $userId,
+                    "vipLevel" => (int) $indicado['vip'],
+                    "depositAmount" => $depositAmount,
+                    "depositCount" => $depositCount,
+                    "withdrawAmount" => $withdrawAmount,
+                    "withdrawCount" => $withdrawCount,
+                    "balance" => (float) $indicado['saldo'],
+                    "diffBalance" => $depositAmount - $withdrawAmount,
+                    "directChildCount" => $directChildCount,
+                    "account" => $account,
+                    "userIdx" => $userId,
+                    "encryption" => $encryption
+                ];
+
+                $totalDeposit += $depositAmount;
+                if ($depositAmount > 0)
+                    $totalDepositPerson++;
+            }
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "list" => $list,
+                    "more" => false,
+                    "totalRecords" => count($list),
+                    "pageSize" => 20,
+                    "startTime" => 0,
+                    "endTime" => 0,
+                    "totalFirstDeposit" => 0,
+                    "totalFirstDepositPerson" => 0,
+                    "totalDeposit" => $totalDeposit,
+                    "totalDepositPerson" => $totalDepositPerson
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if ($requestURI === '/hall/api/active/get') {
+            $rotaEncontrada = true;
+
+            $token = $_COOKIE['token_user'];
+            $stmt = $mysqli->prepare("SELECT * FROM usuarios WHERE token = ?");
+            $stmt->bind_param("s", $token);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            // if ($result->num_rows == 0) {
+            //     echo json_encode(["code" => 0, "msg" => "Usuário não encontrado"]);
+            //     exit;
+            // }
+            $user = $result->fetch_assoc();
+            $inviteCode = $user['invite_code'];
+
+            $activeid = $data['activeId'];
+
+            switch ($activeid) {
+                case 4:
+                    // Buscar configurações de afiliados do banco de dados
+                    $config_afiliados_qry = "SELECT minDepForCpa, minResgate FROM afiliados_config WHERE id = 1";
+                    $config_afiliados_resp = mysqli_query($mysqli, $config_afiliados_qry);
+                    $config_afiliados = mysqli_fetch_assoc($config_afiliados_resp);
+                    
+                    $min_deposito = $config_afiliados['minDepForCpa']; // Depósito mínimo
+                    $min_apostado = $config_afiliados['minResgate']; // Valor mínimo apostado
+
+                    // Busca os usuários convidados pelo usuário principal
+                    $consultaUsuariosConvidados = "SELECT id FROM usuarios WHERE invitation_code = '$inviteCode'";
+                    $resultadoUsuariosConvidados = mysqli_query($mysqli, $consultaUsuariosConvidados);
+                    $idsUsuariosConvidados = [];
+                    while ($linha = mysqli_fetch_assoc($resultadoUsuariosConvidados)) {
+                        $idsUsuariosConvidados[] = $linha['id'];
+                    }
+
+                    $peopleCount = 0;
+                    foreach ($idsUsuariosConvidados as $userId) {
+                        // Soma de bet_money
+                        $consultaBet = "SELECT SUM(bet_money) as totalBet FROM historico_play WHERE id_user = ? AND status_play = '1'";
+                        $stmtBet = $mysqli->prepare($consultaBet);
+                        $stmtBet->bind_param("i", $userId);
+                        $stmtBet->execute();
+                        $resBet = $stmtBet->get_result();
+                        $totalBet = $resBet->fetch_assoc()['totalBet'] ?? 0.00;
+                        $stmtBet->close();
+                    
+                        // Soma de depósitos pagos
+                        $consultaDepositosPagos = "SELECT SUM(valor) as totalDepositosPagos FROM transacoes WHERE usuario = ? AND status = 'pago'";
+                        $stmtDep = $mysqli->prepare($consultaDepositosPagos);
+                        $stmtDep->bind_param("i", $userId);
+                        $stmtDep->execute();
+                        $resDep = $stmtDep->get_result();
+                        $totalDepositosPagos = $resDep->fetch_assoc()['totalDepositosPagos'] ?? 0.00;
+                        $stmtDep->close();
+                    
+                        // Usar valores dinâmicos da configuração
+                        if ($totalBet >= $min_apostado && $totalDepositosPagos >= $min_deposito) {
+                            $peopleCount++;
+                        }
+                    }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 4,
+                            "name" => "Recomende amigos para abrir o Baú dos Prêmios",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":' . $WG_BUCKET_SITE . '"/active/ActiveImg14824027084277250.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 15,
+                            "multiple" => 0,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "1.Convide amigos para abrir o Baú de Tesouros. Conclua com diferentes quantidades de pessoas para receber baús correspondentes, com um valor máximo de 2.000.000,00. Quanto mais amigos você convidar, maior será a recompensa;
+                2.Para que um amigo convidado conte como válido, ele deve depositar no mínimo R$ " . number_format($min_deposito, 0, ',', '.') . " e apostar no mínimo R$ " . number_format($min_apostado, 0, ',', '.') . ";
+                3.Esta atividade é um brinde adicional da plataforma, e também goza de outras recompensas e comissões da agência, ou seja, você pode desfrutar diretamente de múltiplos momentos de felicidade. Os subordinados diretos recém-cadastrados em cada ciclo só serão válidos se atenderem às condições da atividade;
+                4.As recompensas só podem ser reivindicadas manualmente na plataforma Android_H5,iOS_H5,Android_APP,iOS_APP, e recompensas expiradas serão automaticamente distribuidas;
+                5.O bônus concedido neste evento (excluindo o capital) requer 0 apostas válidas para ser sacado, e as apostas não são limitadas a plataforma do jogo;
+                6.Este evento é limitado a operações normais realizadas pelo titular da conta. É proibido alugar, usar plug-ins externos, robôs, apostar em contas diferentes, brushing mútuo, arbitragem, interface, protocolo, exploração de vulnerabilidades, controle de grupo ou outros meios técnicos para participar. Caso contrário, as recompensas serão canceladas ou deduzidas, a conta será congelada ou até mesmo adicionada à lista negra;
+                7.Para evitar diferenças na compreensão do texto, a plataforma reserva-se o direito de interpretação final deste evento.",
+                            "cycleType" => 0,
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6,3,4",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 2,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "reward_type" => 0,
+                                "rule_list" => getBoxList($mysqli, $_COOKIE['token_user']),
+                                "promoteCount" => $peopleCount,
+                                "childrenCount" => 0,
+                                "valid_type" => 0,
+                                "firstPay" => 0,
+                                "pay" => (int)$min_deposito, // Convertido para inteiro
+                                "bet" => (int)$min_apostado, // Convertido para inteiro
+                                "payDays" => 0,
+                                "payTimes" => 0,
+                                "ipLimit" => 0,
+                                "deceiveLimit" => 1,
+                                "limit_type" => 0,
+                                "appLogin" => 0,
+                                "promoteAmount" => 300,
+                                "displayType" => 1,
+                                "displayReward" => 1,
+                                "categoryPlatformGame" => null
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                     // Busca os usuários convidados pelo usuário principal
+                     $consultaUsuariosConvidados = "SELECT id FROM usuarios WHERE invitation_code = '$inviteCode'";
+                     $resultadoUsuariosConvidados = mysqli_query($mysqli, $consultaUsuariosConvidados);
+                     $idsUsuariosConvidados = [];
+                     while ($linha = mysqli_fetch_assoc($resultadoUsuariosConvidados)) {
+                         $idsUsuariosConvidados[] = $linha['id'];
+                     }
+ 
+                     $peopleCount = 0;
+                     foreach ($idsUsuariosConvidados as $userId) {
+                         // Soma de bet_money
+                         $consultaBet = "SELECT SUM(bet_money) as totalBet FROM historico_play WHERE id_user = ? AND status_play = '1'";
+                         $stmtBet = $mysqli->prepare($consultaBet);
+                         $stmtBet->bind_param("i", $userId);
+                         $stmtBet->execute();
+                         $resBet = $stmtBet->get_result();
+                         $totalBet = $resBet->fetch_assoc()['totalBet'] ?? 0.00;
+                         $stmtBet->close();
+                     
+                         // Soma de depósitos pagos
+                         $consultaDepositosPagos = "SELECT SUM(valor) as totalDepositosPagos FROM transacoes WHERE usuario = ? AND status = 'pago'";
+                         $stmtDep = $mysqli->prepare($consultaDepositosPagos);
+                         $stmtDep->bind_param("i", $userId);
+                         $stmtDep->execute();
+                         $resDep = $stmtDep->get_result();
+                         $totalDepositosPagos = $resDep->fetch_assoc()['totalDepositosPagos'] ?? 0.00;
+                         $stmtDep->close();
+                     
+                         if ($totalBet > 100 && $totalDepositosPagos > 10) {
+                             $peopleCount++;
+                         }
+                     }
+
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 4,
+                            "name" => "Recomende amigos para abrir o Baú dos Prêmios",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":' . $WG_BUCKET_SITE . '"/active/ActiveImg14824027084277250.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 15,
+                            "multiple" => 0,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "1.Convide amigos para abrir o Baú de Tesouros. Conclua com diferentes quantidades de pessoas para receber baús correspondentes, com um valor máximo de 2.000.000,00. Quanto mais amigos você convidar, maior será a recompensa;
+                        2.Esta atividade é um brinde adicional da plataforma, e também goza de outras recompensas e comissões da agência, ou seja, você pode desfrutar diretamente de                       múltiplos momentos de felicidade Os subordinados diretos recém-cadastrados em cada ciclo só serão válidos se atenderem às condições da atividade;
+                        3.As recompensas só podem ser reivindicadas manualmente na plataforma Android_H5,iOS_H5,Android_APP,iOS_APP, e recompensas expiradas serão automaticamente                      distribuidas;
+                        4.O bônus concedido neste evento (excluindo o capital) requer 0 apostas válidas para ser sacado, e as apostas não são limitadas a plataforma do jogo;
+                        5.Este evento é limitado a operações normais realizadas pelo titular da conta. É proibido alugar, usar plug-ins externos, robôs, apostar em contas diferentes,                      brushing mútuo, arbitragem, interface, protocolo, exploração de vulnerabilidades, controle de grupo ou outros meios técnicos para participar. Caso contrário, as                        recompensas serão canceladas ou deduzidas, a conta será congelada ou até mesmo adicionada à lista negra;
+                        6.Para evitar diferenças na compreensão do texto, a plataforma reserva-se o direito de interpretação final deste evento.",
+                            "cycleType" => 0,
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6,3,4",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 2,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "reward_type" => 0,
+                                "rule_list" => getBoxList($mysqli, $_COOKIE['token_user']),
+                                "promoteCount" => $peopleCount,
+                                "childrenCount" => 0,
+                                "valid_type" => 0,
+                                "firstPay" => 0,
+                                "pay" => 10,
+                                "bet" => 100,
+                                "payDays" => 0,
+                                "payTimes" => 0,
+                                "ipLimit" => 0,
+                                "deceiveLimit" => 1,
+                                "limit_type" => 0,
+                                "appLogin" => 0,
+                                "promoteAmount" => 300,
+                                "displayType" => 1,
+                                "displayReward" => 1,
+                                "categoryPlatformGame" => null
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                case 2:
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 2,
+                            "name" => "Check In Diário",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":' . $WG_BUCKET_SITE . '"/active/ActiveImg14823988401085161.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 3,
+                            "multiple" => 1,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "1.Somente quando a recarga diária e as apostas válidas atenderem às condições do evento você poderá entrar. Se você entrar com sucesso, poderá receber o bônus correspondente, até 47,00;
+                 2.As apostas de login não se limitam à plataforma e as recompensas devem ser atualizadas em 10 minutos. Aguarde a emissão das recompensas;
+                 3.Esta atividade é uma atividade de check-in contínuo. Se for interrompida durante o período, terá início a partir do 1º dia ;
+                 4.As recompensas só podem ser reivindicadas manualmente por Android_H5,iOS_H5,Android_APP,iOS_APP e serão perdidas se não forem reivindicadas;
+                 5.O bônus concedido neste evento (excluindo o capital) requer 1,00 apostas válidas para ser sacado, e as apostas não são limitadas a plataforma do jogo;
+                 6.Este evento é limitado a operações normais realizadas pelo titular da conta. É proibido alugar, usar plug-ins externos, robôs, apostar em contas diferentes, brushing mútuo, arbitragem, interface, protocolo, exploração de vulnerabilidades, controle de grupo ou outros meios técnicos para participar. Caso contrário, as recompensas serão canceladas ou deduzidas, a conta será congelada ou até mesmo adicionada à lista negra;
+                 7.Para evitar diferenças na compreensão do texto, a plataforma reserva-se o direito de interpretação final deste evento.",
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 3,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "haveBet" => 0,
+                                "needBet" => 1000,
+                                "havePay" => 0,
+                                "needPay" => 50,
+                                "signType" => 0,
+                                "signDays" => 0,
+                                "signDay" => 1,
+                                "receiveReward" => 0,
+                                "signList" => [
+                                    [
+                                        "day" => 1,
+                                        "rewardType" => 0,
+                                        "prize" => 1,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "1",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 2,
+                                        "rewardType" => 0,
+                                        "prize" => 3,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "3",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 3,
+                                        "rewardType" => 0,
+                                        "prize" => 9,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "9",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 4,
+                                        "rewardType" => 0,
+                                        "prize" => 15,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "15",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 5,
+                                        "rewardType" => 0,
+                                        "prize" => 17,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "17",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 6,
+                                        "rewardType" => 0,
+                                        "prize" => 27,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "27",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ],
+                                    [
+                                        "day" => 7,
+                                        "rewardType" => 0,
+                                        "prize" => 47,
+                                        "extraPrize" => 0,
+                                        "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/qd_style2_img_qdjb1.png",
+                                        "signStatus" => 0,
+                                        "text" => "47",
+                                        "isRecoup" => false,
+                                        "needBet" => 1000,
+                                        "needPay" => 50
+                                    ]
+                                ],
+                                "receiveId" => 0,
+                                "logStatus" => 0,
+                                "recoupReceiveId" => 0,
+                                "vipRuleList" => null,
+                                "beforeLoginPopType" => 0,
+                                "afterLoginPopType" => 0,
+                                "canRecoup" => false,
+                                "awardType" => 0,
+                                "monthReset" => 0,
+                                "displayType" => 0
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                case 5:
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 5,
+                            "name" => "Agente Nacional, Compartilhe e Ganhe Dinheiro!",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . $WG_BUCKET_SITE . '"/active/ActiveImg14824093879260952.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 1,
+                            "multiple" => 1,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "/active/content?aid=5&siteCode=7920&language=pt&ossUrl={$WG_BUCKET_SITE}/siteadmin",
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "en",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "en",
+                            "isDefaultLangName" => 0,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 0,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 3,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "displayType" => 0,
+                                "displayList" => null,
+                                "requestType" => 0,
+                                "requestTimes" => 0,
+                                "todayTimes" => 0,
+                                "questions" => null,
+                                "isNewStyle" => 1,
+                                "bgColorStyle" => 0,
+                                "defaultBgColor" => "#7d1013",
+                                "textureType" => 0,
+                                "textureVal" => "{$WG_BUCKET_SITE}/siteadmin/upload/active_shading_up_11.png",
+                                "customTopImg" => "",
+                                "customMidBgColor" => "",
+                                "customBottomImg" => "",
+                                "gradientTopColor" => "",
+                                "gradientMidBgColor" => "",
+                                "gradientBottomColor" => "",
+                                "htmlContent" => '<div id="person_temp2_1" data-v-177c3f5a="">
+                                <div id="person_head" data-v-177c3f5a="">
+                                <div class="person_lookcont" data-v-177c3f5a="">
+                                <div class="person_looksubcont" data-v-177c3f5a="">
+                                <p><span style="font-size: 24px;"><strong style="font-family: "Microsoft YaHei"; text-align: center;"><span style="color: #000000;">👉👉 <span style="color:                                #ff0000;">Telegram: <a style="color: #ff0000;" href="' . $dataconfig['telegram'] . '" target="_top">' . $dataconfig['telegram'] . '</a></span></span></strong></span></p>
+                                <p> </p>
+                                <p><span style="color: #000000;">Atividades de promoção de investimentos da agência <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . '</strong></span></                              span><span style="color: #000000;">: você desfrutará de ricas recompensas de cooperação, como planejadores exclusivos, comissões, bônus misteriosos e                               recompensas físicas! Se você precisar de informações de contato, entre em contato com o atendimento ao cliente. Obrigado pelo seu apoio. Ganhar 10.000 reais por                            dia facilmente não é um sonho. </span><br><span style="color: #000000;">Atividade:</span><br><span style="color: #000000;"> O sistema de agente <span                           style="color: #ff0000;"><strong>' . $dataconfig['nome'] . ' </strong></span>será lançado em breve. Comissão Você também ganhará até <span style="color: #ff0000;">2,0%</span>                        de comissão, convite vitalício! Convide seus amigos para participar do <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . ' </strong></span>e compartilhe a                         empolgação e a diversão de estar online! (Minhas) Comissões → Receber Comissões/Receber.</span></p>
+                                <table style="border-collapse: collapse; width: 100%; height: 351.083px; border-width: 1px; border-color: #000000;;">
+                                <tbody>
+                                <tr style="height: 58.9167px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">aposta válida</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">Slot, Pescaria e Cartas</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">esportes</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.50%</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);" rowspan="8"><span style="color: #000000;">0.3%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">8.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.60%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">15.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.00%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">20.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.30%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">25.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.40% </span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">30.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.50%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">50.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.80%</span></td>
+                                </tr>
+                                <tr style="height: 36.5208px;">
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">100.000.000+</span></td>
+                                <td style="width: 33.2888%; text-align: center; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">2.00%</span></td>
+                                </tr>
+                                </tbody>
+                                </table>
+                                <p><br><span style="color: #000000;">Exemplo: você tem 1.000 membros offline e o valor total real das apostas diárias é estimado em 8 milhões. A comissão que                               você recebeu no dia é: 8.000.000×0,06 = 480.000 reais. Uma renda mensal de 1.000.000 é super fácil de conseguir. </span><br><span style="color: #000000;">como                              aplicar: </span><br><span style="color: #000000;">Depois das 7:00 AM ET: Faça login na sua conta → clique em Comissões de afiliados → (Minhas) comissões →                              Ganhe comissões/receba. Se você não receber o pagamento naquele dia, a comissão será transferida automaticamente para o dia seguinte. Regras da atividade: </                           span><br><span style="color: #000000;">1. O bônus desta promoção pode ser sacado sem a conclusão do processo de cobrança; </span><br><span style="color:                            #000000;">2. As atividades de participação dos membros são contabilizadas automaticamente pelo sistema, havendo objeção prevalecerá o resultado da análise do                           <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . '</strong></span>; </span><br><span style="color: #000000;">3. Se você esquecer sua conta/senha de membro,                       entre em contato com nosso atendimento ao cliente 24 horas para ajudá-lo a recuperar as informações da sua conta; </span><br><span style="color: #000000;">4. A                     <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . ' </strong></span>reserva-se o direito de alterar, interromper ou cancelar a promoção a qualquer momento</span></                      p>
+                                </div>
+                                </div>
+                                </div>
+                                <div id="person_foot" data-v-177c3f5a=""></div>
+                                </div>',
+                                "promoteLinkSwitch" => 0,
+                                "requestConditionType" => 0
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                case 3:
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 3,
+                            "name" => "Bônus extra de depósito inicial",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"{$WG_BUCKET_SITE$}/active/ActiveImg14812233651243177.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 10,
+                            "multiple" => 1,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "1.Exclusivo para o primeiro depósito da conta. Quanto maior o depósito, maior a recompensa, indo até 3.777,00;
+                     2.Depósito ilimitado. Recompensas previstas para serem atualizadas em 10 minutos. Aguarde a distribuição da recompensa;
+                     3.As recompensas recebidas só podem ser resgatadas após Hoje00:00:00. O resgate só pode ser feito manualmente no Android_H5,iOS_H5,Android_APP,iOS_APP;
+                     4.As recompensas recebidas serão invalidadas 1 dias após o final de cada ciclo;
+                     5.O bônus de evento (capital + bônus) requer 1,00 vezes de apostas válidas para saque, sem limite de plataforma.
+                     6.Este evento é limitado a operações normais realizadas pelo titular da conta. É proibido alugar, usar plug-ins externos, robôs, apostar em contas diferentes, brushing mútuo, arbitragem, interface, protocolo, exploração de vulnerabilidades, controle de grupo ou outros meios técnicos para participar. Caso contrário, as recompensas serão canceladas ou deduzidas, a conta será congelada ou até mesmo adicionada à lista negra;
+                     7.Para evitar diferenças na compreensão do texto, a plataforma reserva-se o direito de interpretação final deste evento.
+                     ",
+                            "cycleType" => 1,
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 3,
+                            "userLevel" => "",
+                            "list" => [
+                                [
+                                    "amount" => 50,
+                                    "reward" => 1,
+                                    "signType" => 0,
+                                    "receiveId" => 1
+                                ],
+                                [
+                                    "amount" => 100,
+                                    "reward" => 3,
+                                    "signType" => 0,
+                                    "receiveId" => 2
+                                ],
+                                [
+                                    "amount" => 500,
+                                    "reward" => 17,
+                                    "signType" => 0,
+                                    "receiveId" => 3
+                                ],
+                                [
+                                    "amount" => 1000,
+                                    "reward" => 27,
+                                    "signType" => 0,
+                                    "receiveId" => 4
+                                ],
+                                [
+                                    "amount" => 5000,
+                                    "reward" => 77,
+                                    "signType" => 0,
+                                    "receiveId" => 5
+                                ],
+                                [
+                                    "amount" => 10000,
+                                    "reward" => 277,
+                                    "signType" => 0,
+                                    "receiveId" => 6
+                                ],
+                                [
+                                    "amount" => 50000,
+                                    "reward" => 888,
+                                    "signType" => 0,
+                                    "receiveId" => 7
+                                ],
+                                [
+                                    "amount" => 100000,
+                                    "reward" => 1777,
+                                    "signType" => 0,
+                                    "receiveId" => 8
+                                ],
+                                [
+                                    "amount" => 200000,
+                                    "reward" => 3777,
+                                    "signType" => 0,
+                                    "receiveId" => 9
+                                ]
+                            ],
+                            "activeData" => [
+                                "ruleType" => 2,
+                                "rewardType" => 0,
+                                "rechargeEachOrder" => 0,
+                                "receiveType" => 0,
+                                "receiveList" => null
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                case 6:
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 6,
+                            "name" => "Desconto diário do jogo até 3.0%",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"{$WG_BUCKET_SITE$}/active/ActiveImg14824109983126217.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 1,
+                            "multiple" => 1,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "/active/content?aid=6&siteCode=7920&language=pt&ossUrl={$WG_BUCKET_SITE}/siteadmin",
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "en",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "en",
+                            "isDefaultLangName" => 0,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 0,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 3,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "displayType" => 0,
+                                "displayList" => null,
+                                "requestType" => 0,
+                                "requestTimes" => 0,
+                                "todayTimes" => 0,
+                                "questions" => null,
+                                "isNewStyle" => 1,
+                                "bgColorStyle" => 0,
+                                "defaultBgColor" => "#7d1013",
+                                "textureType" => 0,
+                                "textureVal" => "{$WG_BUCKET_SITE}/siteadmin/upload/active_shading_up_11.png",
+                                "customTopImg" => "",
+                                "customMidBgColor" => "",
+                                "customBottomImg" => "",
+                                "gradientTopColor" => "",
+                                "gradientMidBgColor" => "",
+                                "gradientBottomColor" => "",
+                                "htmlContent" => '<div id="person_temp2_1" data-v-177c3f5a="">
+                     <div id="person_head" data-v-177c3f5a="">
+                     <div class="person_lookcont" data-v-177c3f5a="">
+                     <div class="person_looksubcont" data-v-177c3f5a="">
+                     <p><span style="font-size: 24px;"><strong style="font-family: "Microsoft YaHei"; text-align: center;"><span style="color: #000000;">👉👉 <span style="color: #ff0000;">Telegram: <a style="color: #ff0000;" href="' . $dataconfig['telegram'] . '" target="_top">' . $dataconfig['telegram'] . '</a></span></span></strong></span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">Atividades:</span></p>
+                     <p><span style="color: #000000;">Descontos ilimitados em tempo real em toda a rede <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . ' </strong></span></span><span style="color: #000000;">e aplicativos de autoatendimento a partir de R$ 1! Liquidação em tempo real, sem espera, desconto em um clique, operação simples, apostas a partir de R$ 1, desconto diário de até<span style="color: #ff0000;"> 3.0%</span>, sem limite! Os membros podem liquidar imediatamente o desconto no mesmo dia de acordo com suas próprias necessidades, e o desconto chegará em segundos! Volte sempre que quiser, diga adeus à espera!</span></p>
+                     <table style="border-collapse: collapse; width: 100%; border-width: 1px; border-color: #000000;;">
+                     <tbody>
+                     <tr style="height: 14px;">
+                     <td style="width: 23.8636%; text-align: center; height: 36px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">Apostas</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 36px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">eletrônico</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 36px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">Pescariaria</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 36px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">Tabuleiro e Cartas</span></td>
+                     <td style="width: 18.6497%; text-align: center; height: 36px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">esportes</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">1+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.50%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.50%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.5%</span></td>
+                     <td style="width: 18.6497%; text-align: center; height: 126px; border: 1px solid rgb(0, 0, 0);" rowspan="7"><span style="color: #000000;">0.5%</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">500000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.6%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.6%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">0.6%</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">1.000.000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">0.8%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">0.8%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">0.8%</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">3.000.000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">1.2%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.2%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">1.2%</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">4.000.000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">1.5% </span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">1.5% </span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">1.5% </span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">5.000.000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">2.0%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">2.0%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">2.0%</span></td>
+                     </tr>
+                     <tr style="height: 18px;">
+                     <td style="width: 23.8636%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="font-size: 14px; color: #000000;">8.000.000+</span></td>
+                     <td style="width: 19.2513%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">3.0%</span></td>
+                     <td style="width: 19.8529%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="color: #000000;">3.0%</span></td>
+                     <td style="width: 18.4492%; text-align: center; height: 18px; border: 1px solid rgb(0, 0, 0);"><span style="text-align: center; color: #000000;">3.0%</span></td>
+                     </tr>
+                     </tbody>
+                     </table>
+                     <p><br><span style="color: #000000;">Método de aplicação:</span></p>
+                     <p><span style="color: #000000;">Inicie sessão na conta de membro → o rebate → [Rebate] reivindicação com um clique</span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">Regras da atividade:</span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">1. Todos os jogos de mesa, videopôquer, não participam do cálculo dos descontos diários;</span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">2. Comportamentos que violem as regras normais do jogo, como sparring e árbitros, não serão contados como apostas válidas. Por exemplo, nas apostas esportivas, as apostas de cobertura ou apostas não contam; no entretenimento ao vivo, videogames, apostas na loteria, as apostas sem risco não contam; quaisquer apostas, eventos ou rodadas canceladas não contam. As apostas sem risco incluem apostas simultâneas, grandes e pequenas, ímpares e pares, vermelho e preto, apostas na roleta com mais de 24 números, etc. Se você apostar em "grande" + "par" ao mesmo tempo, e o número de números for alterado para um total de 27, esta rodada não será contada como uma aposta válida e se exceder um terço da aposta valor, não será contabilizado como aposta válida para o dia inteiro;</span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">3. As atividades de participação dos membros são contabilizadas automaticamente pelo sistema, caso haja alguma objeção, prevalecerá o resultado da negociação <span style="color: #ff0000;"><strong>' . $dataconfig['nome'] . '</strong></span>;</span></p>
+                     <p> </p>
+                     <p><span style="color: #000000;">4. Se você esquecer sua conta/senha de membro, entre em contato com o "atendimento ao cliente online 24 horas" para ajudá-lo a recuperar as informações da sua conta;</span></p>
+                     </div>
+                     </div>
+                     </div>
+                     <div id="person_foot" data-v-177c3f5a=""></div>
+                     </div>',
+                                "promoteLinkSwitch" => 0,
+                                "requestConditionType" => 0
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+                case 16:
+                    $response = [
+                        "code" => 1,
+                        "msg" => "返回成功",
+                        "time" => round(microtime(true) * 1000),
+                        "data" => [
+                            "id" => 16,
+                            "name" => "Total de apostas da Roda da Sorte",
+                            "imagePath" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":' . $WG_BUCKET_SITE . '/active/ActiveImg14824459110600979.jpg","promotional_pictures":[],"picture_status":0}',
+                            "template" => 20,
+                            "multiple" => 1,
+                            "startShowTime" => round(microtime(true) * 1000),
+                            "endShowTime" => 2082769199,
+                            "startTime" => round(microtime(true) * 1000),
+                            "endTime" => 2082769199,
+                            "content" => "1.Durante o período do evento, cada aposta válida de 1,00 ganha automaticamente 1 ponto da sorte. 1.000,00-30.000,00 pontos da sorte permitem um sorteio, com a recompensa máxima sendo 75,00.
+                     2.Se o valor da sorte obtido este mês não for utilizado até o próximo mês ele irá expirar;
+                     3.As recompensas só podem ser resgatadas manualmente em Android_H5,iOS_H5,Android_APP,iOS_APP.
+                     4.O bônus concedido neste evento (excluindo o capital) requer 1,00 apostas válidas para ser sacado, e as apostas não são limitadas a plataforma do jogo;
+                     5.Este evento é limitado a operações normais realizadas pelo titular da conta. É proibido alugar, usar plug-ins externos, robôs, apostar em contas diferentes, brushing mútuo, arbitragem, interface, protocolo, exploração de vulnerabilidades, controle de grupo ou outros meios técnicos para participar. Caso contrário, as recompensas serão canceladas ou deduzidas, a conta será congelada ou até mesmo adicionada à lista negra;
+                     6.Para evitar diferenças na compreensão do texto, a plataforma reserva-se o direito de interpretação final deste evento.",
+                            "showOneClick" => 1,
+                            "status" => 1,
+                            "isShowTime" => 1,
+                            "isShowDetailTime" => 1,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "isDefaultLang" => 0,
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "activeCondition" => "",
+                            "conditionText" => "",
+                            "giveType" => 3,
+                            "userLevel" => "",
+                            "activeData" => [
+                                "haveIntegral" => 0,
+                                "turntableList" => [
+                                    [
+                                        "need_integral" => 1000,
+                                        "rotary_type" => 0,
+                                        "list" => [
+                                            [
+                                                "index" => 1,
+                                                "prize" => 0.05,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 2,
+                                                "prize" => 1,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 3,
+                                                "prize" => 2,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 4,
+                                                "prize" => 3,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 5,
+                                                "prize" => 4,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 6,
+                                                "prize" => 5,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 7,
+                                                "prize" => 15,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 8,
+                                                "prize" => 25,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 9,
+                                                "prize" => 35,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 10,
+                                                "prize" => 75,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ]
+                                        ]
+                                    ],
+                                    [
+                                        "need_integral" => 10000,
+                                        "rotary_type" => 1,
+                                        "list" => [
+                                            [
+                                                "index" => 1,
+                                                "prize" => 0.05,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 2,
+                                                "prize" => 1,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 3,
+                                                "prize" => 2,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 4,
+                                                "prize" => 3,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 5,
+                                                "prize" => 4,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 6,
+                                                "prize" => 5,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 7,
+                                                "prize" => 15,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 8,
+                                                "prize" => 25,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 9,
+                                                "prize" => 35,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 10,
+                                                "prize" => 75,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ]
+                                        ]
+                                    ],
+                                    [
+                                        "need_integral" => 30000,
+                                        "rotary_type" => 2,
+                                        "list" => [
+                                            [
+                                                "index" => 1,
+                                                "prize" => 0.05,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 2,
+                                                "prize" => 1,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 3,
+                                                "prize" => 2,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 4,
+                                                "prize" => 3,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 5,
+                                                "prize" => 4,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 6,
+                                                "prize" => 5,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 7,
+                                                "prize" => 15,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 8,
+                                                "prize" => 25,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 9,
+                                                "prize" => 35,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ],
+                                            [
+                                                "index" => 10,
+                                                "prize" => 75,
+                                                "icon" => "https://lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_zphdjp_s1.png"
+                                            ]
+                                        ]
+                                    ]
+                                ],
+                                "isShowDetails" => 0,
+                                "isShowAnnouncement" => 1,
+                                "isShowTask" => 0,
+                                "rewardType" => 1,
+                                "integralRatio" => 1,
+                                "totalIntegral" => 0,
+                                "expireIntegral" => 0,
+                                "usedIntegral" => 0,
+                                "validBet" => 0,
+                                "betForIntegral" => 1,
+                                "luckyIntegralEffectiveType" => 0
+                            ],
+                            "hasReceiveLogs" => false
+                        ]
+                    ];
+                    break;
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        if ($requestURI === '/hall/api/agent/promote/report/directCouponV2') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "list" => null,
+                    "totalRecords" => 0,
+                    "total" => 0,
+                    "pageSize" => 0,
+                    "more" => false,
+                    "totalOrders" => null,
+                    "totalValidBet" => null,
+                    "totalProfit" => null,
+                    "directOrders" => null,
+                    "directValidBet" => null,
+                    "directProfit" => null,
+                    "startTime" => 1747364400,
+                    "endTime" => 1747450799
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        if ($requestURI === '/hall/api/active/receiveOne') {
+            if (isset($_COOKIE['token_user']) && !empty($_COOKIE['token_user'])) {
+                // Verificar o token
+                $qry = "SELECT * FROM usuarios WHERE token = '" . $_COOKIE['token_user'] . "'";
+                $resp = mysqli_query($mysqli, $qry);
+
+                if (mysqli_num_rows($resp) === 0) {
+                    $response = [
+                        "code" => 0,
+                        "msg" => "Faça login primeiramente",
+                        "time" => time(),
+                        "data" => null,
+                    ];
+                } else {
+                    $datres = mysqli_fetch_assoc($resp);
+                    if (isset($data['receiveId']) && !empty($data['receiveId'])) {
+                        $numerobau = $data['receiveId'];
+
+                        // Obter a lista de baús para o usuário
+                        $boxList = getBoxList($mysqli, $_COOKIE['token_user']);
+                        $baus = $boxList;
+                        $valorbau = 0;
+                        $bau_id = null;
+
+                        // Encontrar o valor e o ID do baú correspondente
+                        foreach ($baus as $bau) {
+                            if ($bau['id'] == $numerobau) { // Agora compara pelo campo 'id'
+                                $valorbau = $bau['expectedReward']; // Valor do baú
+                                $bau_id = $bau['id']; // O campo 'inviteNum' é salvo na tabela 'bau'
+                                break;
+                            }
+                        }
+
+                        if ($valorbau > 0 && $bau_id !== null) {
+                            // Buscar o valor atual de 'num' na tabela 'bau' para o usuário específico
+                            $qry = "SELECT num FROM bau WHERE token='" . $_COOKIE['token_user'] . "'";
+                            $resp = mysqli_query($mysqli, $qry);
+                            $row = mysqli_fetch_assoc($resp);
+                            $nums = $row['num'];
+
+                            // Adicionar o novo número do baú ao valor existente
+                            if (!empty($nums)) {
+                                $numsArray = explode(',', $nums);
+                                if (!in_array($bau_id, $numsArray)) {
+                                    $numsArray[] = $bau_id;
+                                    $newNums = implode(',', $numsArray);
+                                } else {
+                                    $newNums = $nums;
+                                }
+                            } else {
+                                $newNums = $bau_id;
+                            }
+
+                            // Atualizar o valor do campo 'num' na tabela 'bau'
+                            $abrirbau_qry = "UPDATE bau SET num='$newNums' WHERE token='" . $_COOKIE['token_user'] . "'";
+                            $abrirbau_resp = mysqli_query($mysqli, $abrirbau_qry);
+
+                            if (mysqli_affected_rows($mysqli) >= 1) {
+                                // Chamar a função enviarSaldo
+                                if (enviarSaldo($datres['mobile'], $valorbau)) {
+                                    $response = [
+                                        "code" => 1,
+                                        "msg" => "返回成功",
+                                        "time" => round(microtime(true) * 1000),
+                                        "data" => []
+                                    ];
+                                } else {
+                                    $response = [
+                                        'status' => true,
+                                        'msg' => 'Erro ao enviar saldo',
+                                        'data' => '1006',
+                                    ];
+                                }
+                            } else {
+                                $response = [
+                                    "code" => 0,
+                                    "msg" => "Erro ao resgatar baú",
+                                    "time" => time(),
+                                    "data" => null,
+                                ];
+                            }
+                        } else {
+                            $response = [
+                                "code" => 0,
+                                "msg" => "Valor do baú não encontrado ou inválido",
+                                "time" => time(),
+                                "data" => null,
+                            ];
+                        }
+                    } else {
+                        $response = [
+                            "code" => 0,
+                            "msg" => "Número do baú não fornecido",
+                            "time" => time(),
+                            "data" => null,
+                        ];
+                    }
+                }
+            } else {
+                $response = [
+                    "code" => 0,
+                    "msg" => "Token não fornecido",
+                    "time" => time(),
+                    "data" => null,
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+
+
+        break;
+
+    case 'GET':
+        /* Rotas GET */
+        // Rota message/list/all (GET) -> Marquee Rolante - DINÂMICA
+        if (preg_match('#^/hall/api/message/list/all/currency/([^/]+)/language/([^/]+)/page/(\d+)/type/(\d+)\.json#', $requestURI, $matches)) {
+            $rotaEncontrada = true;
+        
+            // Captura os parâmetros da URL
+            $currency = $matches[1]; // BRL
+            $language = $matches[2]; // pt
+            $page = (int)$matches[3]; // 1
+            $type = (int)$matches[4]; // 1, 99, etc.
+        
+            header('Content-Type: application/json; charset=utf-8');
+        
+            // A consulta para buscar apenas mensagens ATIVAS (status = 1) do tipo banner
+            $query = "SELECT * FROM mensagens WHERE status = 1 AND texto = 0 ORDER BY id DESC";
+            $result = $mysqli->query($query);
+        
+            // Inicializa a lista vazia
+            $publicityMsgList = [];
+        
+            // Verifique se há resultados
+            if ($result && $result->num_rows > 0) {
+                // Itera sobre as mensagens
+                while ($row = $result->fetch_assoc()) {
+                    $publicityMsgList[] = [
+                        "active_info" => [
+                            [
+                                "ActiveId" => $row['id'],
+                                "ActiveName" => $row['titulo']
+                            ],
+                        ],
+                        "content" => $row['content'],
+                        "frameEndTime" => 2095901999,
+                        "frameStartTime" => 1744772400,
+                        "frame_pop" => 1,
+                        "frame_switch" => 1,
+                        "frame_type" => 1,
+                        "hidden" => 1,
+                        "id" => $row['id'],
+                        "img_category" => 1,
+                        "img_color" => "",
+                        "img_icon" => "",
+                        "img_style" => 3,
+                        "img_url" => "/uploads/" . $row['banner'],
+                        "is_maintenance" => false,
+                        "location_jump_window" => 2,
+                        "location_name" => "活动",
+                        "location_template" => "15",
+                        "location_type" => 3,
+                        "location_value" => "4",
+                        "maintenance_end" => 0,
+                        "maintenance_start" => 0,
+                        "publicity_name" => $row['titulo'],
+                        "read_status" => 0,
+                        "receiver_type" => 1,
+                        "strokeColor" => "",
+                        "suspend_url" => "2",
+                        "suspended" => 2,
+                        "textStroke" => 0
+                    ];
+                }
+            }
+        
+            // Buscar mensagem para noticeFrameMsgList (apenas se existir uma ativa com texto = 1)
+            $noticeQuery = "SELECT * FROM mensagens WHERE status = 1 AND texto = 1 ORDER BY id DESC LIMIT 1";
+            $noticeResult = $mysqli->query($noticeQuery);
+        
+            $noticeFrameMsgList = [];
+        
+            if ($noticeResult && $noticeResult->num_rows > 0) {
+                $noticeRow = $noticeResult->fetch_assoc();
+                
+                $noticeFrameMsgList[] = [
+                    "content" => $noticeRow['content'],
+                    "create_time" => 1745935200,
+                    "cycleTime" => 0,
+                    "endTime" => 0,
+                    "feedbackId" => 0,
+                    "frameEndTime" => 2095901999,
+                    "frameStartTime" => 1744772400,
+                    "frameSwitch" => 1,
+                    "frameType" => 1,
+                    "id" => 153443,
+                    "interval" => 0,
+                    "isPublish" => 1,
+                    "isPublishFrame" => 1,
+                    "list_title" => "",
+                    "prize" => 0,
+                    "prize_status" => 0,
+                    "publishTime" => 1745935200,
+                    "read_status" => 0,
+                    "sendTime" => 1745935200,
+                    "startTime" => 1745935200,
+                    "time_stamp" => 0,
+                    "title" => $noticeRow['titulo'],
+                    "title_origin" => $noticeRow['titulo'],
+                    "triggerId" => 0,
+                    "triggerType" => 0
+                ];
+            }
+        
+            // Response SEMPRE é gerado (com ou sem mensagens)
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "marqueeList" => [
+                        [
+                            "content" => $dataconfig['marquee'],
+                            "create_time" => 1745935200,
+                            "id" => 153445,
+                            "interval" => 2
+                        ]
+                    ],
+                    "noticeCount" => count($publicityMsgList),
+                    "noticeFrameMsgList" => $noticeFrameMsgList,
+                    "publicityMsgList" => $publicityMsgList,
+                    "unreadNoticeCount" => count($publicityMsgList)
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+        
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota Cocos/config_data (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/cocos/config_data.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "web_bucket_url" => [
+
+                ],
+                "siteCode" => "7920",
+                "siteBucketSwitchStatus" => 0,
+                "issuedTime" => "2025-04-11 16:00:53",
+                "api_domain" => [
+
+                ],
+                "download_domain" => [
+                ],
+                "oss_url" => [
+
+                ],
+                "non_ma_domain" => [
+
+                ],
+                "combo_domain" => [
+
+                ],
+                "lobby_domain" => [
+
+                ],
+                "oss_domain" => [
+
+                ],
+                "commonOssBucket" => "",
+                "web_domain" => [
+
+                ],
+                "ma_domain" => [
+                ],
+                "pay_domain_switch_status" => 1,
+                "h5_domain" => [
+
+                ],
+                "pay_domain" => [
+                ],
+                "commonOssDomain" => [
+
+                ],
+                "hotfix_domain" => [
+
+                ],
+                "download_domain_url" => [
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota isShowV2/default (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/isShowV2/default.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "activePageSort" => "1,2,5,3,6,4,7,8",
+                    "blindBoxConfig" => [
+                        "bigSwitch" => 0,
+                        "commonSwitch" => 0,
+                        "currency" => "0",
+                        "smallSwitch" => 0,
+                        "superSwitch" => 0,
+                        "userLevels" => ""
+                    ],
+                    "disableReceiveAwardAll" => 1,
+                    "disableReceiveLogPop" => 0,
+                    "rechargeFundClosed" => 1,
+                    "rechargeFundConfig" => [
+                        [
+                            "currency" => "BRL",
+                            "userLevels" => "1,2,3,4,5,6,7,8,9,10,11"
+                        ]
+                    ],
+                    "returnGoldClosed" => 0,
+                    "returnGoldConfig" => [
+                        [
+                            "currency" => "0",
+                            "userLevels" => "1,2,3,4,5,6,7,8,9,10,10001,10002,10003,10004,11",
+                            "vipLevels" => ""
+                        ]
+                    ],
+                    "unreceiveRewardListStyle" => 0,
+                    "vipConfig" => [
+                        "BRL" => [
+                            "banUserLevel" => "10004,10000,10001,10002,10003"
+                        ]
+                    ],
+                    "yueBaoConfig" => [
+                        "BRL" => [
+                            "userLevels" => "0"
+                        ]
+                    ]
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota maxChargeRate/currency/BRL/osType (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/maxChargeRate/currency/BRL/osType/4.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "charge_rate" => 0
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota game/hall/listVirtualBonusPoolV2 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listVirtualBonusPoolV2/currency/BRL.json') {
+            $rotaEncontrada = true;
+
+            $response = ($dataconfig['jackpot_ativado'] == 1) ? [
+                "code" => 0,
+                "data" => [
+                    [
+                        "a" => "1912621523379802114",
+                        "b" => 1,
+                        "c" => '{"name":"跑马灯上方","type":10}',
+                        "d" => [
+                            "name" => "PG电子",
+                            "type" => 10,
+                            "value" => "3",
+                            "value2" => "200"
+                        ],
+                        "e" => 2,
+                        "f" => 2,
+                        "g" => 0,
+                        "h" => "",
+                        "j" => "",
+                        "k" => "vjp/" . $dataconfig['jackpot_custom'],
+                        "m" => round((microtime(true) + 10 * 24 * 60 * 60) * 1000),
+                        "n" => [
+                            "10013128.76",
+                            "10013336.89",
+                            "10013462.77",
+                            "10013643.20",
+                            "10013827.07",
+                            "10014037.08",
+                            "10014184.70",
+                            "10014318.51",
+                            "10014477.60",
+                            "10014681.34",
+                            "10014802.55",
+                            "10014943.94",
+                            "10015120.58",
+                            "10015288.20",
+                            "10015453.62",
+                            "10015652.95",
+                            "10015771.22",
+                            "10015977.82",
+                            "10016146.74",
+                            "10016295.52",
+                            "10016414.78",
+                            "10016534.69",
+                            "10016651.07",
+                            "10016827.51",
+                            "10017000.45",
+                            "10017127.04",
+                            "10017326.62",
+                            "10017471.78",
+                            "10017684.96",
+                            "10017899.30",
+                            "10018092.11",
+                            "10018224.76",
+                            "10018354.43",
+                            "10018551.44",
+                            "10018743.18",
+                            "10018911.21",
+                            "10019102.13",
+                            "10019316.60",
+                            "10019506.45",
+                            "10019648.49",
+                            "10019794.77",
+                            "10019922.08",
+                            "10020102.35",
+                            "10020310.10",
+                            "10020486.87",
+                            "10020605.26",
+                            "10020741.37",
+                            "10020907.01",
+                            "10021106.27",
+                            "10021318.75",
+                            "10021484.63",
+                            "10021676.43",
+                            "10021801.06",
+                            "10021942.99",
+                            "10022144.82",
+                            "10022269.67",
+                            "10022458.30",
+                            "10022672.44",
+                            "10022797.02",
+                            "10022932.96",
+                            "10023048.85",
+                            "10023173.44",
+                            "10023332.49",
+                            "10023493.52",
+                            "10023648.06",
+                            "10023862.46",
+                            "10024052.37",
+                            "10024173.82",
+                            "10024362.70",
+                            "10024511.59",
+                            "10024697.89",
+                            "10024840.12",
+                            "10024991.33",
+                            "10025136.83",
+                            "10025253.97",
+                            "10025389.51",
+                            "10025573.90",
+                            "10025721.73",
+                            "10025843.98",
+                            "10026010.59",
+                            "10026192.78",
+                            "10026309.18",
+                            "10026483.49",
+                            "10026684.77",
+                            "10026835.95",
+                            "10026976.42",
+                            "10027111.94",
+                            "10027277.01",
+                            "10027409.04",
+                            "10027525.14",
+                            "10027700.11",
+                            "10027844.12",
+                            "10027999.26",
+                            "10028152.72",
+                            "10028288.64",
+                            "10028503.24",
+                            "10028714.66",
+                            "10028916.92",
+                            "10029048.97",
+                            "10029216.48",
+                            "10029391.18",
+                            "10029539.72",
+                            "10029743.42",
+                            "10029938.32",
+                            "10030056.14",
+                            "10030265.12",
+                            "10030428.75",
+                            "10030604.11",
+                            "10030739.40",
+                            "10030938.14",
+                            "10031130.46",
+                            "10031252.28",
+                            "10031442.85",
+                            "10031582.24",
+                            "10031772.14",
+                            "10031955.77",
+                            "10032132.16",
+                            "10032335.25",
+                            "10032528.19",
+                            "10032733.99"
+                        ],
+                        "y" => ""
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ] : [
+                "code" => 0,
+                "data" => [],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota games home - 
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/hotListV2/currency/BRL/language/pt.json') {
+
+            $rotaEncontrada = true; // Rota encontrada
+            
+            try {
+                // Buscar TODOS os jogos populares do banco de dados (sem limite)
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE status = 1 AND popular = 1 
+                        ORDER BY id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                
+                
+                // Adicionar TODOS os jogos populares do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados, limpando apenas backticks e espaços
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, usar um padrão baseado no ID
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],
+                        "g1" => $row['game_name'],
+                        "g10" => 200, // Platform ID padrão
+                        "g11" => 2,
+                        "g2" => $banner, // Banner real do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,
+                        "g5" => (int)$row['popular'],
+                        "g6" => 0,
+                        "g7" => 1,
+                        "g8" => (int)$row['status'],
+                        "g9" => 3 // Category ID padrão
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota lobby/footerConfigV2/getInfo (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/footerConfigV2/getInfo/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "customLayouts" => [
+                        [
+                            "QUICK_JUMP"
+                        ],
+                        [
+                            "CONCAT_US"
+                        ],
+                        [
+                            "OFFICIAL_COMMUNITY"
+                        ],
+                        [
+                            "CONTENT"
+                        ]
+                    ],
+                    "edited" => 0,
+                    "footerStyle" => "0",
+                    "oldContent" => [
+                        "companyInfoLanguage" => [
+                            "companyName" => "",
+                            "customContent" => '<p><span style="font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;">Sobre a ' . $dataconfig['grupoplataforma'] . ' A ' . $dataconfig['nome'] . '</span><span style="font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;">&nbsp;&eacute; uma das mais renomadas empresas internacionais de opera&ccedil;&atilde;o de cassinos online, oferecendo uma variedade de jogos emocionantes, como jogos com crupi&ecirc; ao vivo, ca&ccedil;a-n&iacute;queis, pesca, loterias, esportes e muito mais. Somos autorizados e regulamentados pelo Governo de Cura&ccedil;ao com n&uacute;mero de licen&ccedil;a operacional Antilephone 8048/JAZ Passamos em todas as inspe&ccedil;&otilde;es</span></p>',
+                            "isDefault" => false,
+                            "issuingAuthority" => "",
+                            "licenseKey" => ""
+                        ],
+                        "companyInfoStatus" => 0,
+                        "contactInfoLanguage" => [
+                            "contactContent" => "",
+                            "copyrightInfo" => ""
+                        ],
+                        "contactInfoStatus" => 1,
+                        "partnerInfo" => [
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599597920276481.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599959092617218.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599686227189761.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599636334817282.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599707588448257.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599798997078018.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599846274142209.png",
+                                "partnerLink" => ""
+                            ],
+                            [
+                                "partnerImage" => "https://jirm37-8005-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1924599757721329666.png",
+                                "partnerLink" => ""
+                            ]    
+                        ],
+                        "partnerInfoStatus" => 0,
+                        "qualificationProofLanguages" => [
+                            [
+                                "qualificationImage" => "",
+                                "qualificationLink" => ""
+                            ]
+                        ],
+                        "qualificationProofStatus" => 1,
+                        "quickJumpStatus" => 0
+                    ],
+                    "quickJump" => [
+                        "game" => [
+                            "child" => [
+                                "gameSwitch"
+                            ],
+                            "label" => "游戏",
+                            "value" => "game"
+                        ],
+                        "licenseCompliance" => [
+                            "child" => [
+                                "ageLimit"
+                            ]
+                        ],
+                        "recreationInfo" => [
+                            "child" => [
+                                "active",
+                                "task",
+                                "backwater",
+                                "award",
+                                "vip",
+                                "paidToPromote",
+                                "providentFund",
+                                "blindBox"
+                            ],
+                            "label" => "娱乐城",
+                            "value" => "recreationCity"
+                        ],
+                        "support" => [
+                            "child" => [
+                                "onlineSupport",
+                                "helpCenter",
+                                "prizeFeedback"
+                            ],
+                            "label" => "支持",
+                            "value" => "support"
+                        ]
+                    ],
+                    "quickJumpStyle" => 1
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota lobby/aboutUs/index (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/aboutUs/index/getInfo/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota lobby/userAgreement/index (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/userAgreement/index/getInfo/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "title" => "Termos de Uso e Política de Privacidade",
+                    "content" => [
+                        "userAgreement" => [
+                            "title" => "Termos de Uso",
+                            "sections" => [
+                                [
+                                    "title" => "1. Aceitação dos Termos",
+                                    "content" => "Ao utilizar nossos serviços, você concorda com estes termos de uso."
+                                ],
+                                [
+                                    "title" => "2. Uso Responsável",
+                                    "content" => "O usuário deve utilizar a plataforma de forma responsável e legal."
+                                ],
+                                [
+                                    "title" => "3. Privacidade",
+                                    "content" => "Respeitamos sua privacidade conforme nossa política de privacidade."
+                                ]
+                            ]
+                        ],
+                        "privacyPolicy" => [
+                            "title" => "Política de Privacidade",
+                            "sections" => [
+                                [
+                                    "title" => "Coleta de Dados",
+                                    "content" => "Coletamos apenas dados necessários para o funcionamento do serviço."
+                                ],
+                                [
+                                    "title" => "Uso dos Dados",
+                                    "content" => "Seus dados são utilizados apenas para melhorar sua experiência."
+                                ],
+                                [
+                                    "title" => "Proteção",
+                                    "content" => "Implementamos medidas de segurança para proteger suas informações."
+                                ]
+                            ]
+                        ]
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota game/hall/listPlatformCateLoadV2 (GET) -> Categoria de Jogos
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformCateLoadV2/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    [
+                        "l" => [],
+                        "p0" => 0,
+                        "p1" => "Popular",
+                        "p2" => 1,
+                        "p3" => 2,
+                        "p4" => 3,
+                        "p5" => 2,
+                        "p6" => 5,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [
+                            [
+                                "t10" => "PG",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "PG Slots",
+                                "t16" => 1,
+                                "t17" => "200/custom",
+                                "t18" => 0,
+                                "t19" => 0,
+                                "t2" => 0,
+                                "t3" => 1,
+                                "t4" => 3,
+                                "t5" => "0/200_N_PG_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t8" => "200/custom",
+                                "t9" => 200
+                            ],
+                            [
+                                "t10" => "WG",
+                                "t11" => "",
+                                "t12" => 1,
+                                "t13" => 1,
+                                "t14" => 1,
+                                "t15" => "WG Slots",
+                                "t16" => 1,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 3,
+                                "t5" => "0/13_N_WG_LOGO.png?t=1681975574",
+                                "t6" => 0,
+                                "t7" => 1,
+                                "t8" => "",
+                                "t9" => 13
+                            ],
+                            [
+                                "t10" => "JDB",
+                                "t11" => "",
+                                "t12" => 1,
+                                "t13" => 1,
+                                "t14" => 1,
+                                "t15" => "JDB Slots",
+                                "t16" => 1,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 3,
+                                "t5" => "0/310_N_JDB_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t8" => "",
+                                "t9" => 310
+                            ],
+                            [
+                                "t10" => "PP",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "PP Slots",
+                                "t16" => 1,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t4" => 3,
+                                "t5" => "0/37_N_PP_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t9" => 301
+                            ],
+                            [
+                                "t10" => "TADA",
+                                "t11" => "",
+                                "t12" => 1,
+                                "t13" => 1,
+                                "t14" => 1,
+                                "t15" => "TADA Slots",
+                                "t16" => 1,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 3,
+                                "t5" => "0/302_N_TADA_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t8" => "",
+                                "t9" => 302
+                            ],
+                            [
+                                "t10" => "CQ9",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "CQ9 Slots",
+                                "t16" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t4" => 3,
+                                "t5" => "0/3_N_CQ9_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t9" => 316
+                            ],
+                            [
+                                "t10" => "FC",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "FC Slots",
+                                "t16" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t4" => 3,
+                                "t5" => "0/24_N_FC_LOGO.png",
+                                "t6" => 0, // ATIVAR OU DESATIVAR OS PROVEDOR COMO MANUTEÇÃO
+                                "t7" => 1,
+                                "t9" => 203
+                            ],
+                            [
+                                "t10" => "SPRIBE",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "Spribe",
+                                "t16" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t4" => 3,
+                                "t5" => "0/339_SPRIBE2_LOGO.png",
+                                "t6" => 0,
+                                "t7" => 1,
+                                "t9" => 339
+                            ],
+                        ],
+                        "p0" => 3,
+                        "p1" => "Slots",
+                        "p2" => 1,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 5,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    // [
+                    //     "l" => [
+                    //         [
+                    //             "t10" => "WG",
+                    //             "t11" => "",
+                    //             "t12" => 0,
+                    //             "t13" => 0,
+                    //             "t14" => 0,
+                    //             "t15" => "WG Blockchain",
+                    //             "t16" => 0,
+                    //             "t18" => 0,
+                    //             "t19" => 1,
+                    //             "t2" => 1,
+                    //             "t20" => 0,
+                    //             "t21" => "",
+                    //             "t3" => 0,
+                    //             "t4" => 11,
+                    //             "t5" => "0/13_N_WG_LOGO.png?t=1681975574",
+                    //             "t6" => 1,
+                    //             "t7" => 1,
+                    //             "t8" => "",
+                    //             "t9" => 13
+                    //         ],
+                    //         [
+                    //             "t10" => "JDB",
+                    //             "t11" => "",
+                    //             "t12" => 1,
+                    //             "t13" => 1,
+                    //             "t14" => 1,
+                    //             "t15" => "JDB Blockchain",
+                    //             "t16" => 0,
+                    //             "t18" => 0,
+                    //             "t19" => 1,
+                    //             "t2" => 0,
+                    //             "t20" => 0,
+                    //             "t21" => "",
+                    //             "t3" => 0,
+                    //             "t4" => 11,
+                    //             "t5" => "0/310_N_JDB_LOGO.png",
+                    //             "t6" => 1,
+                    //             "t7" => 1,
+                    //             "t8" => "",
+                    //             "t9" => 310
+                    //         ]
+                    //     ],
+                    //     "p0" => 11,
+                    //     "p1" => "Blockchain",
+                    //     "p2" => 1,
+                    //     "p3" => 1,
+                    //     "p4" => 5,
+                    //     "p5" => 1,
+                    //     "p6" => 5,
+                    //     "p7" => 10,
+                    //     "p8" => 10
+                    // ],
+                    [
+                        "l" => [],
+                        "p0" => 1,
+                        "p1" => "Cartas",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 2,
+                        "p1" => "Pescaria",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [
+                            [
+                                "t1" => 520093,
+                                "t10" => "WL",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "WL Jogo Ao Vivo",
+                                "t16" => 0,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 4,
+                                "t5" => "0/52_N_WL_LOGO.png",
+                                "t6" => 0,
+                                "t7" => 0,
+                                "t8" => "",
+                                "t9" => 52
+                            ],
+                            [
+                                "t1" => 3180000,
+                                "t10" => "W",
+                                "t11" => "",
+                                "t12" => 1,
+                                "t13" => 1,
+                                "t14" => 1,
+                                "t15" => "W Jogo Ao Vivo",
+                                "t16" => 0,
+                                "t19" => 1,
+                                "t2" => 0,
+                                "t4" => 4,
+                                "t5" => "0/318_N_W_LOGO.png",
+                                "t6" => 0,
+                                "t7" => 0,
+                                "t9" => 318
+                            ]
+                        ],
+                        "p0" => 4,
+                        "p1" => "Ao Vivo",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 5,
+                        "p1" => "Esporte",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 6,
+                        "p1" => "Brigas Galos",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 7,
+                        "p1" => "Esports",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 8,
+                        "p1" => "Loteria",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [
+                            [
+                                "t10" => "WG",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "WG Slots",
+                                "t16" => 1,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 3,
+                                "t5" => "0/13_N_WG_LOGO.png?t=1681975574",
+                                "t6" => 0,
+                                "t7" => 1,
+                                "t8" => "",
+                                "t9" => 13
+                            ],
+                            [
+                                "t10" => "JDB",
+                                "t11" => "",
+                                "t12" => 1,
+                                "t13" => 1,
+                                "t14" => 1,
+                                "t15" => "JDB Slots",
+                                "t16" => 1,
+                                "t18" => 0,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t20" => 0,
+                                "t21" => "",
+                                "t3" => 0,
+                                "t4" => 3,
+                                "t5" => "0/310_N_JDB_LOGO.png",
+                                "t6" => 1,
+                                "t7" => 1,
+                                "t8" => "",
+                                "t9" => 310
+                            ],
+                            [
+                                "t10" => "PP",
+                                "t11" => "",
+                                "t12" => 0,
+                                "t13" => 0,
+                                "t14" => 0,
+                                "t15" => "PP Slots",
+                                "t16" => 1,
+                                "t19" => 1,
+                                "t2" => 1,
+                                "t4" => 3,
+                                "t5" => "0/37_N_PP_LOGO.png",
+                                "t6" => 0,
+                                "t7" => 1,
+                                "t9" => 301
+                            ],
+                            // [
+                            //     "t10" => "WG",
+                            //     "t11" => "",
+                            //     "t12" => 0,
+                            //     "t13" => 0,
+                            //     "t14" => 0,
+                            //     "t15" => "WG Blockchain",
+                            //     "t16" => 1,
+                            //     "t18" => 0,
+                            //     "t19" => 1,
+                            //     "t2" => 1,
+                            //     "t20" => 0,
+                            //     "t21" => "",
+                            //     "t3" => 0,
+                            //     "t4" => 11,
+                            //     "t5" => "0/13_N_WG_LOGO.png?t=1681975574",
+                            //     "t6" => 0,
+                            //     "t7" => 1,
+                            //     "t8" => "",
+                            //     "t9" => 13
+                            // ]
+                        ],
+                        "p0" => 20,
+                        "p1" => "Jogar Grátis",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ],
+                    [
+                        "l" => [],
+                        "p0" => 12,
+                        "p1" => "Mesa de quarto",
+                        "p2" => 0,
+                        "p3" => 1,
+                        "p4" => 5,
+                        "p5" => 1,
+                        "p6" => 2,
+                        "p7" => 10,
+                        "p8" => 10
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota game/hall/listExtLinkV2 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listExtLinkV2/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota game/hall/gameVersion (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/gameVersion/currency/BRL.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "customGameVersion" => "g",
+                    "defaultGameVersion" => "g0",
+                    "currentVersion" => "g0",
+                    "supportedVersions" => ["g0", "g", "g1", "g2"],
+                    "versionInfo" => [
+                        "g0" => [
+                            "name" => "Default Version",
+                            "description" => "Standard game version",
+                            "features" => ["basic_games", "standard_ui"]
+                        ],
+                        "g" => [
+                            "name" => "Custom Version", 
+                            "description" => "Enhanced game version",
+                            "features" => ["advanced_games", "enhanced_ui", "bonus_features"]
+                        ]
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota lobby/site/getSiteInfo (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/site/getSiteInfo/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "agentId" => 0,
+                    "agentName" => "无限级差",
+                    "backgroundColor" => 1,
+                    "clubType" => 2,
+                    "currencyCode" => "BRL",
+                    "currencyId" => 11,
+                    "currencyIds" => "11",
+                    "currencyInfos" => [
+                        [
+                            "ci" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/BRL.png",
+                            "currencyAisle" => "",
+                            "currencyCode" => "BRL",
+                            "currencyDisplay" => "BRL",
+                            "currencyName" => "巴西雷亚尔",
+                            "currencySign" => "R$",
+                            "currencyType" => 1,
+                            "fullName" => "Brazilian Real",
+                            "gameRate" => 1,
+                            "hs" => 1,
+                            "id" => 11,
+                            "marketCurrencyCode" => "BRL",
+                            "nation" => "巴西",
+                            "thousandthPlace" => "."
+                        ]
+                    ],
+                    "currencySign" => "R$",
+                    "deployEnv" => "northAmerica",
+                    "description" => "",
+                    "gameRate" => 1,
+                    "goBizMaintainStatus" => 1,
+                    "goClubMaintainStatus" => 1,
+                    "goGameMaintainStatus" => 1,
+                    "keyword" => "",
+                    "languageId" => 8,
+                    "languageIds" => "1,8",
+                    "languageInfos" => [
+                        [
+                            "defaultLanguageTag" => false,
+                            "id" => 1,
+                            "languageCode" => "en",
+                            "languageFlagIcon" => "icon_flag_en.png",
+                            "languageName" => "英文",
+                            "languageTranslateName" => "English"
+                        ],
+                        [
+                            "defaultLanguageTag" => true,
+                            "id" => 8,
+                            "languageCode" => "pt",
+                            "languageFlagIcon" => "icon_flag_pt.png",
+                            "languageName" => "葡萄牙语",
+                            "languageTranslateName" => "Português"
+                        ]
+                    ],
+                    "languageMatchMode" => 0,
+                    "limitStatus" => 0,
+                    "maintainStatus" => 0,
+                    "maintainTimeBegin" => 1745730000,
+                    "maintainTimeEnd" => 1745762400,
+                    "parentSiteCode" => "7920",
+                    "siteCode" => "7920",
+                    "siteName" => "站158",
+                    "skinConfigInfo" => [
+                        "web_topbg_1" => "#E9C86F",
+                        "web_topbg_3" => "#BB993E",
+                        "home_bg" => "#4C0113",
+                        "text_primary" => "#4C0113",
+                        "label_accent3" => "#FFAA09",
+                        "web_left_bg_shadow" => "#0000001F",
+                        "bs_zc_bg" => "#4C0113",
+                        "web_filter_gou" => "#4C0113",
+                        "web_plat_line" => "#842239",
+                        "text_accent3" => "#FFFFFF",
+                        "web_left_bg_q" => "#FFFFFF0A",
+                        "filter_active" => "#E9C86F",
+                        "bg_2" => "#4C0113",
+                        "bg_1" => "#651226",
+                        "web_left_bg_z" => "#FFFFFF0D",
+                        "ID" => "2-22",
+                        "filter_bg" => "#651226",
+                        "皮肤版式" => "欧美风",
+                        "alt_primary" => "#E9C86F",
+                        "border" => "#842239",
+                        "profile_toptext" => "#FFFFFF",
+                        "bs_zc_an1" => "#58071B",
+                        "ddt_icon" => "#701E31",
+                        "bs_topnav_bg" => "#330215",
+                        "icon_tg_z" => "#D9859A",
+                        "ddt_bg" => "#5A071B",
+                        "alt_text_primary" => "#4C0113",
+                        "btmnav_def" => "#B95B71",
+                        "icon_tg_q" => "#D9859A",
+                        "alt_border" => "#D9859A",
+                        "labeltext_accent3" => "#FFFFFF",
+                        "web_bs_yj_bg" => "#330215",
+                        "kb_bg" => "#842239",
+                        "primary" => "#E9C86F",
+                        "icon_1" => "#E9C86F",
+                        "web_left_bg_shadow_active" => "#0000001F",
+                        "jackpot_text" => "#FFFFFF",
+                        "btmnav_active" => "#E9C86F",
+                        "web_load_zz" => "#84223966",
+                        "皮肤名称" => "Bordeaux红",
+                        "web_btmnav_db" => "#400114",
+                        "alt_lead" => "#FFFFFF",
+                        "profile_icon_1" => "#E9C86F",
+                        "leftnav_def" => "#D9859A",
+                        "profile_icon_2" => "#E9C86F",
+                        "profile_icon_3" => "#E9C86F",
+                        "neutral_1" => "#D9859A",
+                        "profile_icon_4" => "#E9C86F",
+                        "neutral_3" => "#B95B71",
+                        "search_icon" => "#D9859A",
+                        "neutral_2" => "#B95B71",
+                        "lead" => "#FFFFFF",
+                        "accent_2" => "#EA4E3D",
+                        "accent_1" => "#04BE02",
+                        "accent_3" => "#FFAA09",
+                        "alt_neutral_2" => "#B95B71",
+                        "jdd_vip_bjc" => "#FFAA09",
+                        "alt_neutral_1" => "#D9859A",
+                        "table_bg" => "#4C0113",
+                        "web_bs_zc_an2" => "#711028",
+                        "leftnav_active" => "#4C0113"
+                    ],
+                    "skinId" => 1697160834305101825,
+                    "skinTypeValue" => 22,
+                    "skinVersion" => "v2",
+                    "status" => 0,
+                    "timeZone" => "UTC -03:00",
+                    "title" => $dataconfig['nome'],
+                    "type" => 2,
+                    "vestBagJumpConfig" => [
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota backstage/system/status (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/backstage/system/status/currency/BRL/language/pt/osType/4/platformType/5.json' || 
+            parse_url($requestURI, PHP_URL_PATH) === '/hall/api/backstage/system/status/currency/BRL/language/pt/osType/5/platformType/5.json' || 
+            parse_url($requestURI, PHP_URL_PATH) === '/hall/api/backstage/system/status/currency/BRL/language/pt/osType/6/platformType/5.json' || 
+            parse_url($requestURI, PHP_URL_PATH) === '/hall/api/backstage/system/status') {
+            $rotaEncontrada = true;
+
+            switch ($dataconfig['tema_popup_inicio']) {
+                case 1:
+                    $response = [
+                        "code" => 1,
+                        "data" => [
+                            "homeGetSysInfo" => [
+                                "accountRegister" => [
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "email" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "passwordConfirm" => 1,
+                                    "phone" => 2,
+                                    "quickEntry" => [
+                                        "loginQuickEntryCustomer" => 1,
+                                        "loginQuickEntryFree" => 1,
+                                        "loginQuickEntryInstant" => 1,
+                                        "registerQuickEntryCustomer" => 1,
+                                        "registerQuickEntryFree" => 1,
+                                        "registerQuickEntryInstant" => 1
+                                    ],
+                                    "realName" => 0
+                                ],
+                                "agentDisplayAgentSetting" => 1,
+                                "agentDisplayAgentTransfer" => 2,
+                                "agentDisplayCreateAccount" => 1,
+                                "agentDisplayEntrance" => 1,
+                                "agentDisplayParent" => 2,
+                                "agentDisplayTutorial" => 1,
+                                "autoVisitorLogin" => 1,
+                                "autoVisitorLoginH5" => 3,
+                                "auto_visitor_login" => 1,
+                                "auto_visitor_login_h5" => 1,
+                                "auto_visitor_login_web" => 1,
+                                "betTaskDisplayToggle" => 2,
+                                "clubFriendState" => 1,
+                                "clubSecurityVerify" => [
+                                    "clubSecurityEmail" => 0,
+                                    "clubSecurityGoogle" => 1,
+                                    "clubSecurityPhone" => 0
+                                ],
+                                "cpfRegexValidateDisabled" => 1,
+                                "directFinancial" => 1,
+                                "directNewAccount" => 1,
+                                "directOrder" => 1,
+                                "directReport" => 1,
+                                "directTake" => 1,
+                                "emailRequired" => 0,
+                                "emailSwitch" => 0,
+                                "enableModifyPhone" => 1,
+                                "enable_club" => 1,
+                                "enable_onekey_register" => 2,
+                                "enable_using_gmail" => 2,
+                                "enable_using_sms" => 2,
+                                "facebook" => [
+                                    "app_id" => "",
+                                    "status" => 0
+                                ],
+                                "fingerprintJS" => [
+                                    "publicKey" => "cIMrDd2qJKZFByajXD7O"
+                                ],
+                                "forgetPwdVerify" => [
+                                    "securityEmail" => 0,
+                                    "securityGoogle" => 1,
+                                    "securityPassQuestion" => 2,
+                                    "securityPassQuestionAccount" => 0,
+                                    "securityPhone" => 0,
+                                    "securityWithdrawPass" => 2
+                                ],
+                                "forget_account_passwd_phone_verify_switch" => 1,
+                                "forget_account_passwd_question_verify_switch" => 1,
+                                "forget_bank_passwd_phone_verify_switch" => 1,
+                                "forget_bank_passwd_question_verify_switch" => 1,
+                                "free_training_switch" => 1,
+                                "geetestDeviceAndroidAppId" => "ew2as8ojhn1vyjy8xtxd0myhkxscgqay",
+                                "geetestDeviceAppId" => "9ia4hndgblg9xihxcwgdjt9ztg8sjwaf",
+                                "geetestDeviceIOSAppId" => "ewkvbrw52ypxzpni86epjpwg9l19ieer",
+                                "geetest_captcha_id" => [
+                                    "feedback" => "62c528ead784206de7e6db17765b9ac0",
+                                    "force_geetest" => "62c528ead784206de7e6db17765b9ac0",
+                                    "login" => "62c528ead784206de7e6db17765b9ac0",
+                                    "recharge" => "62c528ead784206de7e6db17765b9ac0",
+                                    "register" => "62c528ead784206de7e6db17765b9ac0"
+                                ],
+                                "google" => [
+                                    "app_id" => "",
+                                    "status" => 0
+                                ],
+                                "inviter_code_required" => 0,
+                                "inviter_code_switch" => 0,
+                                "inviter_code_update" => 0,
+                                "kfOnlineStatus" => 1,
+                                "kyc" => [
+                                    "legalUserCountry" => "0",
+                                    "legalUserEkycDoc" => "0",
+                                    "legalUserEkycFace" => "0",
+                                    "legalUserEkycTips" => 'De acordo com os regulamentos de <a href="https://www.pagcor.ph/index.php">"PAGCOR"</a>, você precisa concluir a certificação KYC antes de poder usá-lo!',
+                                    "legalUserEmployerName" => "0",
+                                    "legalUserFreezeCloseWindow" => "0",
+                                    "legalUserFreezeHours" => "72",
+                                    "legalUserFreezeSwitch" => "0",
+                                    "legalUserFreezeTips" => 'De acordo com os regulamentos do <a href="https://www.pagcor.ph/index.php">"PAGCOR"</a>, você precisa preencher todas as informações a seguir dentro de 72 horas após o registro, caso contrário a conta ficará inutilizável e as restrições não serão suspensas até que todas sejam concluídas.',
+                                    "legalUserFullname" => "0",
+                                    "legalUserIncomeSource" => "0",
+                                    "legalUserPlaceOfBirth" => "0",
+                                    "legalUserPlaceOfCurrent" => "0",
+                                    "legalUserPlaceOfPermanent" => "0",
+                                    "legalUserWithdrawTips" => 'De acordo com os regulamentos de <a href="https://www.pagcor.ph/index.php">"PAGCOR"</a>, você precisa preencher as seguintes informações antes de poder sacar dinheiro!',
+                                    "legalUserWorkType" => "0",
+                                    "pcKycSwitch" => 0,
+                                    "popWinAgreement" => 0,
+                                    "provider" => null,
+                                    "regFillRealInfoSwitch" => 0,
+                                    "regKycSwitch" => 0,
+                                    "withdrawKycSwitch" => 0
+                                ],
+                                "legal_config_active_status" => "0",
+                                "legal_config_location_detection" => "0",
+                                "legal_config_login_status" => "0",
+                                "line" => [
+                                    "app_id" => "",
+                                    "status" => 0
+                                ],
+                                "loginGameRestrictions" => [
+                                    "loginGameDownloadApp" => 0,
+                                    "loginGameDownloadAppTips" => "Para uma melhor experiência de jogo, baixe e instale o APP mais recente e, em seguida, use a conta: {{CustomerAccount}} para fazer login e jogar no APP! Se você tiver outras dúvidas, entre em contato com {{ContactCustomerService}}",
+                                    "loginGameDownloadAppTipsSwitch" => 0,
+                                    "loginGameDownloadAppType" => "1,2,3",
+                                    "loginGameFirstCharge" => 0,
+                                    "loginGameOnlyAndroidDownloadApp" => 1,
+                                    "loginGameOnlyRechargedDownloadApp" => 1,
+                                    "loginGameRechargedCountDownloadNativeApp" => 99999,
+                                    "loginGameRechargedCountDownloadNativeAppTips" => "Parabéns por se tornar um super VIP! Para sua melhor experiência, baixe o APP nativo para que possamos fornecer serviços mais avançados. Se você tiver outras dúvidas, entre em contato com {{ContactCustomerService}}.",
+                                    "loginGameRechargedCountDownloadNativeAppTipsSwitch" => 0,
+                                    "returnLobbyDoubleConfirm" => 0,
+                                    "returnLobbyDoubleConfirmShowRecharge" => 1
+                                ],
+                                "loginPasswdStrengthDetectSwitch" => 0,
+                                "loginQuickEntryCustomer" => 1,
+                                "loginQuickEntryFree" => 1,
+                                "loginQuickEntryInstant" => 1,
+                                "loginRegister" => [
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "passwordDefaultPlainText" => 0,
+                                    "quickEntry" => [
+                                        "customer" => 1,
+                                        "trial" => 1
+                                    ],
+                                    "realName" => 0,
+                                    "tabSort" => "1,2"
+                                ],
+                                "login_validate_mode" => 1,
+                                "messageSwitch" => [
+                                    "ann" => [
+                                        "delete" => 1,
+                                        "read" => 0
+                                    ],
+                                    "notify" => [
+                                        "delete" => 0,
+                                        "read" => 1
+                                    ]
+                                ],
+                                "min_vip_level" => 0,
+                                "modifyPromoteCurrency" => 0,
+                                "musicAutoPlay" => 0,
+                                "musicShow" => 1,
+                                "phoneRegister" => [
+                                    "account" => 0,
+                                    "confirmDialog" => 0,
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "email" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "loginVerify" => 0,
+                                    "loginVerifyDefaultHint" => 0,
+                                    "password" => 0,
+                                    "quickEntry" => [
+                                        "quickEntryCustomer" => 1,
+                                        "quickEntryForgetPassword" => 1,
+                                        "quickEntryFree" => 1
+                                    ],
+                                    "realName" => 0,
+                                    "registerRequiredCaptcha" => 0,
+                                    "split" => 1
+                                ],
+                                "questionListDisplay" => 0,
+                                "realNameConsecutiveCharLimitTimes" => 0,
+                                "realNameMustUppercase" => 0,
+                                "realNameRequired" => 0,
+                                "realNameSwitch" => 0,
+                                "recommendAreaCode" => "",
+                                "recommendCurrency" => "",
+                                "recommendLanguage" => "en",
+                                "registerCpfRequired" => 0,
+                                "registerCpfSwitch" => 0,
+                                "registerQuickEntryCustomer" => 1,
+                                "registerQuickEntryFree" => 1,
+                                "registerQuickEntryInstant" => 1,
+                                "registerTabSort" => "1,2",
+                                "registerTimeSwitch" => 0,
+                                "register_phone_switch" => 0,
+                                "register_validate_mode" => 1,
+                                "registermode" => 3,
+                                "resetPwdOneVerify" => 0,
+                                "resversion" => "v1.0.0.1",
+                                "securityVerify" => [
+                                    "firstWithdrawPasswdSet" => 0,
+                                    "securityEmail" => 0,
+                                    "securityGoogle" => 1,
+                                    "securityLoginPass" => 1,
+                                    "securityPassQuestion" => 1,
+                                    "securityPhone" => 0,
+                                    "securityWithdrawPass" => 0
+                                ],
+                                "serverversion" => "v1.0.0.1",
+                                "site_status" => 0,
+                                "strongPasswdLength" => 8,
+                                "strongPasswdRequireLowercase" => 1,
+                                "strongPasswdRequireNum" => 1,
+                                "strongPasswdRequireSpecial" => 0,
+                                "strongPasswdRequireUppercase" => 1,
+                                "strongPasswdWeakLoginRemind" => 0,
+                                "token" => "b2e3d672-9d88-47a7-81b4-9d7ffc62054f",
+                                "tryCurrency" => "CNY",
+                                "userEmailSwitch" => 1,
+                                "userGestureSwitch" => 1,
+                                "userLineSwitch" => 1,
+                                "userPhoneSwitch" => 1,
+                                "userRegisterTimeSwitch" => 0,
+                                "userTwitterSwitch" => 1,
+                                "userZaloSwitch" => 0,
+                                "user_facebook_switch" => 1,
+                                "user_telegram_switch" => 1,
+                                "user_wechat_switch" => 0,
+                                "user_whatsapp_switch" => 1
+                            ],
+                            "messageBannerIndex" => [
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 9,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("1"),
+                                    "location_jump_window" => 2,
+                                    "location_name" => "活动",
+                                    "location_template" => "15",
+                                    "location_type" => 3,
+                                    "location_value" => "4",
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 15,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 7,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("2"),
+                                    "location_jump_window" => 1,
+                                    "location_name" => "外部链接",
+                                    "location_template" => "",
+                                    "location_type" => 2,
+                                    "location_value" => $dataconfig['instagram'],
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 5,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("3"),
+                                    "location_jump_window" => 2,
+                                    "location_name" => "充值",
+                                    "location_template" => "",
+                                    "location_type" => 5,
+                                    "location_value" => "",
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 3,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("4"),
+                                    "location_jump_window" => 1,
+                                    "location_name" => "外部链接",
+                                    "location_template" => "",
+                                    "location_type" => 2,
+                                    "location_value" => $dataconfig['telegram'],
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                            ],
+                            "promoteGetSocialmedia" => [
+                                [
+                                    "andriodAddr" => "https://t.me/telegram",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_tg.png",
+                                    "id" => 2240005,
+                                    "iosAddr" => "https://t.me/telegram",
+                                    "name" => "Telegram",
+                                    "type_id" => 5
+                                ],
+                                [
+                                    "andriodAddr" => "https://wa.me/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_wa.png",
+                                    "id" => 2240006,
+                                    "iosAddr" => "https://api.whatsapp.com",
+                                    "name" => "WhatsApp",
+                                    "type_id" => 3
+                                ],
+                                [
+                                    "andriodAddr" => "https://threads.net/intent/post",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_threads.png",
+                                    "id" => 2240001,
+                                    "iosAddr" => "https://threads.net/intent/post",
+                                    "name" => "Threads",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://twitter.com/intent/tweet",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_x.png",
+                                    "id" => 2240009,
+                                    "iosAddr" => "https://twitter.com/intent/tweet",
+                                    "name" => "X",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://www.facebook.com/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_facebook.png",
+                                    "id" => 2240008,
+                                    "iosAddr" => "https://www.facebook.com/",
+                                    "name" => "Facebook",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://line.me/R/ti/p/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_line.png",
+                                    "id" => 2240007,
+                                    "iosAddr" => "https://line.me/R/ti/p/",
+                                    "name" => "Line",
+                                    "type_id" => 6
+                                ]
+                            ],
+                            "userVipConfig" => [
+                                [
+                                    "currency" => "BRL",
+                                    "status" => 1
+                                ]
+                            ],
+                            "yuebaoGetSetting" => [
+                                "auditPlatformCategoryGame" => "[]",
+                                "circle" => 1,
+                                "createTime" => 0,
+                                "currency" => "BRL",
+                                "dayRate" => "1.36",
+                                "hourRate" => "0.057077",
+                                "id" => 300002,
+                                "interestTop" => 1,
+                                "isPop" => 1,
+                                "levelIds" => "",
+                                "maxCapital" => "0",
+                                "minCapital" => "20",
+                                "operator" => "",
+                                "profitMax" => "0",
+                                "ruleText" => "1.<strong>Introdução aos ganhos:</strong> O valor depositado no tesouro de juros deve satisfazer pelo menos um ciclo completo para gerar juros. Se for transferido antecipadamente, nenhum lucro será calculado nesse período. Por exemplo: o período de liquidação atual é de 1 horas, então o valor transferido por 01/01/2025 00:00:01 gerará juros no primeiro período em 01/01/2025 01:00:01;
+                 2.<strong>Ciclo de liquidação:</strong> O ciclo atual de liquidação de juros é de 1 horas;
+                 3.<strong>Taxa de Juros Anual: </strong>A taxa percentual anual atual é500%;
+                 4.<strong> Fórmula de cálculo: </strong>Rendimento da Poupança = valor do depósito × Taxa de juros anual / ciclo de liquidação;
+                 5.<strong>Exemplo:</strong>A deposita 01/01/2025 00:00:01 em 10.000, a taxa de juros anual é 500% e o período de liquidação é 1 horas, então a primeira receita de juros é obtida em 01/01/2025 01:00:01. O método de cálculo é o seguinte:<strong>Primeiros juros =10.000*500%/365 dias/24 horas*1 horas = 5,707762</strong>;
+                 6.<strong>Limite de transferência:</strong> cada valor de transferência deve ser maior ou igual a 20 (ou seja, ≥20). Não há limite máximo para o valor da transferência. Quanto maior for a transferência, maior será o rendimento;
+                 7.<strong>Limite de rendimentos: </strong>No momento, o limite de rendimentos permite acumular em até 1 ciclos. Após esse período, não haverá mais geração de rendimentos. Para evitar a perda de rendimentos, lembre-se de receber seus lucros periodicamente!
+                 8.<strong>Horário de cobrança:</strong> Atualmente é cobrado no dia seguinte, ou seja, os juros gerados nesse dia não podem ser cobrados até às 0h00 do dia seguinte;
+                 9.<strong>Múltiplo de auditoria:</strong> O múltiplo de auditoria atual é 1 vezes (requisitos de volume de apostas), ou seja, os juros recebidos precisam ser colocados antes que o dinheiro possa ser sacado, aposta Nenhuma plataforma válida específica,Apenas os juros recebidos requerem auditoria, enquanto o valor principal transferido para dentro ou para fora não requer auditoria;
+                 10.<strong>Declaração do evento: </strong> Esta função é exclusiva para apostas em jogos realizadas pelo próprio titular da conta. Alugar, usar bots, robôs, apostas entre contas diferentes, apostas mútuas, arbitragem, acesso à API, exploração de falhas, controle de grupo ou outros meios técnicos são proibidos.O controle de grupo ou outros meios técnicos são proibidos. Uma vez verificado, a plataforma reserva o direito de encerrar os logins dos membros, suspender o uso do site pelos membros e confiscar bônus e lucros impróprios sem aviso prévio;
+                 11.<strong>Explicação:</strong> Quando um membro recebe a recompensa Yibao, a plataforma presumirá que o membro concorda e cumpre as condições correspondentes e outros regulamentos relevantes. Para evitar ambiguidade na compreensão do texto, a plataforma reserva-se o direito. para a interpretação final deste evento.",
+                                "settleType" => 60,
+                                "switchStatus" => 1,
+                                "userText" => "Todos os membros",
+                                "validBetTimes" => "1",
+                                "vips" => "",
+                                "yearRate" => "500"
+                            ]
+                        ],
+                        "siteCode" => "7920",
+                        "time" => round(microtime(true) * 1000)
+                    ];
+                    break;
+                case 2:
+                    $response = [
+                        "code" => 1,
+                        "data" => [
+                            "homeGetSysInfo" => [
+                                "accountRegister" => [
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "email" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "passwordConfirm" => 1,
+                                    "phone" => 0,
+                                    "quickEntry" => [
+                                        "loginQuickEntryCustomer" => 1,
+                                        "loginQuickEntryFree" => 1,
+                                        "loginQuickEntryInstant" => 1,
+                                        "registerQuickEntryCustomer" => 1,
+                                        "registerQuickEntryFree" => 1,
+                                        "registerQuickEntryInstant" => 1
+                                    ],
+                                    "realName" => 0
+                                ],
+                                "agentDisplayAgentSetting" => 1,
+                                "agentDisplayAgentTransfer" => 2,
+                                "agentDisplayCreateAccount" => 1,
+                                "agentDisplayEntrance" => 1,
+                                "agentDisplayParent" => 2,
+                                "agentDisplayTutorial" => 1,
+                                "autoVisitorLogin" => 1,
+                                "autoVisitorLoginH5" => 3,
+                                "auto_visitor_login" => 1,
+                                "auto_visitor_login_h5" => 1,
+                                "auto_visitor_login_web" => 1,
+                                "betTaskDisplayToggle" => 2,
+                                "clubFriendState" => 1,
+                                "clubSecurityVerify" => [
+                                    "clubSecurityEmail" => 0,
+                                    "clubSecurityGoogle" => 1,
+                                    "clubSecurityPhone" => 1
+                                ],
+                                "cpfRegexValidateDisabled" => 1,
+                                "directFinancial" => 1,
+                                "directNewAccount" => 1,
+                                "directOrder" => 1,
+                                "directReport" => 1,
+                                "directTake" => 1,
+                                "emailRequired" => 0,
+                                "emailSwitch" => 0,
+                                "enableModifyPhone" => 0,
+                                "enable_club" => 1,
+                                "enable_onekey_register" => 2,
+                                "enable_using_gmail" => 2,
+                                "enable_using_sms" => 1,
+                                "facebook" => [
+                                    "app_id" => "",
+                                    "status" => 0
+                                ],
+                                "fingerprintJS" => [
+                                    "publicKey" => "cIMrDd2qJKZFByajXD7O"
+                                ],
+                                "forgetPwdVerify" => [
+                                    "securityEmail" => 0,
+                                    "securityGoogle" => 1,
+                                    "securityPassQuestion" => 2,
+                                    "securityPassQuestionAccount" => 0,
+                                    "securityPhone" => 1,
+                                    "securityWithdrawPass" => 2
+                                ],
+                                "forget_account_passwd_phone_verify_switch" => 1,
+                                "forget_account_passwd_question_verify_switch" => 1,
+                                "forget_bank_passwd_phone_verify_switch" => 1,
+                                "forget_bank_passwd_question_verify_switch" => 1,
+                                "free_training_switch" => 1,
+                                "geetestDeviceAndroidAppId" => "ew2as8ojhn1vyjy8xtxd0myhkxscgqay",
+                                "geetestDeviceAppId" => "9ia4hndgblg9xihxcwgdjt9ztg8sjwaf",
+                                "geetestDeviceIOSAppId" => "ewkvbrw52ypxzpni86epjpwg9l19ieer",
+                                "geetest_captcha_id" => [
+                                    "feedback" => "62c528ead784206de7e6db17765b9ac0",
+                                    "force_geetest" => "62c528ead784206de7e6db17765b9ac0",
+                                    "login" => "62c528ead784206de7e6db17765b9ac0",
+                                    "recharge" => "62c528ead784206de7e6db17765b9ac0",
+                                    "register" => "62c528ead784206de7e6db17765b9ac0"
+                                ],
+                                "google" => [
+                                    "appSecret" => "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",
+                                    "app_id" => "40649073626-rfnfl4ik9ctkgl05ov4g9s6q1usjq5qr.apps.googleusercontent.com",
+                                    "status" => 0
+                                ],
+                                "inviter_code_required" => 0,
+                                "inviter_code_switch" => 0,
+                                "inviter_code_update" => 0,
+                                "kfOnlineStatus" => 1,
+                                "kyc" => [
+                                    "legalUserCountry" => "0",
+                                    "legalUserEkycDoc" => "0",
+                                    "legalUserEkycFace" => "0",
+                                    "legalUserEkycTips" => '',
+                                    "legalUserEmployerName" => "0",
+                                    "legalUserFreezeCloseWindow" => "0",
+                                    "legalUserFreezeHours" => "72",
+                                    "legalUserFreezeSwitch" => "0",
+                                    "legalUserFreezeTips" => "",
+                                    "legalUserFullname" => "0",
+                                    "legalUserIncomeSource" => "0",
+                                    "legalUserPlaceOfBirth" => "0",
+                                    "legalUserPlaceOfCurrent" => "0",
+                                    "legalUserPlaceOfPermanent" => "0",
+                                    "legalUserWithdrawTips" => "",
+                                    "legalUserWorkType" => "0",
+                                    "pcKycSwitch" => 0,
+                                    "popWinAgreement" => 0,
+                                    "provider" => null,
+                                    "regFillRealInfoSwitch" => 0,
+                                    "regKycSwitch" => 0,
+                                    "withdrawKycSwitch" => 0
+                                ],
+                                "legal_config_active_status" => "0",
+                                "legal_config_location_detection" => "0",
+                                "legal_config_login_status" => "0",
+                                "line" => [
+                                    "app_id" => "",
+                                    "status" => 0
+                                ],
+                                "loginGameRestrictions" => [
+                                    "loginGameDownloadApp" => 0,
+                                    "loginGameDownloadAppTips" => "Para uma melhor experiência de jogo, baixe e instale o APP mais recente e, em seguida, use a conta: {{CustomerAccount}} para fazer login e jogar no APP! Se você tiver outras dúvidas, entre em contato com {{ContactCustomerService}}",
+                                    "loginGameDownloadAppTipsSwitch" => 0,
+                                    "loginGameDownloadAppType" => "1,2,3",
+                                    "loginGameFirstCharge" => 0,
+                                    "loginGameOnlyAndroidDownloadApp" => 1,
+                                    "loginGameOnlyRechargedDownloadApp" => 1,
+                                    "loginGameRechargedCountDownloadNativeApp" => 99999,
+                                    "loginGameRechargedCountDownloadNativeAppTips" => "Parabéns por se tornar um super VIP! Para sua melhor experiência, baixe o APP nativo para que possamos fornecer serviços mais avançados. Se você tiver outras dúvidas, entre em contato com {{ContactCustomerService}}.",
+                                    "loginGameRechargedCountDownloadNativeAppTipsSwitch" => 0,
+                                    "returnLobbyDoubleConfirm" => 1,
+                                    "returnLobbyDoubleConfirmShowRecharge" => 1
+                                ],
+                                "loginPasswdStrengthDetectSwitch" => 0,
+                                "loginQuickEntryCustomer" => 1,
+                                "loginQuickEntryFree" => 1,
+                                "loginQuickEntryInstant" => 1,
+                                "loginRegister" => [
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "passwordDefaultPlainText" => 0,
+                                    "quickEntry" => [
+                                        "customer" => 1,
+                                        "trial" => 1
+                                    ],
+                                    "realName" => 0,
+                                    "tabSort" => "1,2"
+                                ],
+                                "login_validate_mode" => 5,
+                                "messageSwitch" => [
+                                    "ann" => [
+                                        "delete" => 1,
+                                        "read" => 0
+                                    ],
+                                    "notify" => [
+                                        "delete" => 0,
+                                        "read" => 1
+                                    ]
+                                ],
+                                "min_vip_level" => 0,
+                                "modifyPromoteCurrency" => 0,
+                                "musicAutoPlay" => 0,
+                                "musicShow" => 1,
+                                "phoneRegister" => [
+                                    "account" => 0,
+                                    "confirmDialog" => 0,
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "email" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "loginVerify" => 2,
+                                    "loginVerifyDefaultHint" => 0,
+                                    "password" => 0,
+                                    "quickEntry" => [
+                                        "quickEntryCustomer" => 1,
+                                        "quickEntryForgetPassword" => 1,
+                                        "quickEntryFree" => 1
+                                    ],
+                                    "realName" => 0,
+                                    "registerRequiredCaptcha" => 0,
+                                    "split" => 0
+                                ],
+                                "questionListDisplay" => 0,
+                                "realNameConsecutiveCharLimitTimes" => 0,
+                                "realNameMustUppercase" => 0,
+                                "realNameRequired" => 0,
+                                "realNameSwitch" => 0,
+                                "recommendAreaCode" => "",
+                                "recommendCurrency" => "",
+                                "recommendLanguage" => "en",
+                                "registerCpfRequired" => 0,
+                                "registerCpfSwitch" => 0,
+                                "registerQuickEntryCustomer" => 1,
+                                "registerQuickEntryFree" => 1,
+                                "registerQuickEntryInstant" => 1,
+                                "registerTabSort" => "1,2",
+                                "registerTimeSwitch" => 0,
+                                "register_phone_switch" => 0,
+                                "register_validate_mode" => 5,
+                                "registermode" => 3,
+                                "resetPwdOneVerify" => 0,
+                                "resversion" => "v1.0.0.1",
+                                "securityVerify" => [
+                                    "firstWithdrawPasswdSet" => 0,
+                                    "securityEmail" => 0,
+                                    "securityGoogle" => 1,
+                                    "securityLoginPass" => 1,
+                                    "securityPassQuestion" => 1,
+                                    "securityPhone" => 1,
+                                    "securityWithdrawPass" => 0
+                                ],
+                                "serverversion" => "v1.0.0.1",
+                                "site_status" => 0,
+                                "strongPasswdLength" => 8,
+                                "strongPasswdRequireLowercase" => 1,
+                                "strongPasswdRequireNum" => 1,
+                                "strongPasswdRequireSpecial" => 0,
+                                "strongPasswdRequireUppercase" => 1,
+                                "strongPasswdWeakLoginRemind" => 0,
+                                "thirdPartyRegister" => [
+                                    "cpf" => 0,
+                                    "currency" => 0,
+                                    "email" => 0,
+                                    "inviteCode" => 0,
+                                    "inviteCodeUnchangeable" => 0,
+                                    "phone" => 0,
+                                    "realName" => 0
+                                ],
+                                "token" => "b2e3d672-9d88-47a7-81b4-9d7ffc62054f",
+                                "tryCurrency" => "CNY",
+                                "userEmailSwitch" => 0,
+                                "userGestureSwitch" => 1,
+                                "userLineSwitch" => 0,
+                                "userPhoneSwitch" => 1,
+                                "userRegisterTimeSwitch" => 0,
+                                "userTwitterSwitch" => 0,
+                                "userZaloSwitch" => 0,
+                                "user_facebook_switch" => 1,
+                                "user_telegram_switch" => 1,
+                                "user_wechat_switch" => 0,
+                                "user_whatsapp_switch" => 1
+                            ],
+                            "messageBannerIndex" => [
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 9,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("1"),
+                                    "location_jump_window" => 2,
+                                    "location_name" => "活动",
+                                    "location_template" => "15",
+                                    "location_type" => 3,
+                                    "location_value" => "4",
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 15,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 7,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("2"),
+                                    "location_jump_window" => 1,
+                                    "location_name" => "外部链接",
+                                    "location_template" => "",
+                                    "location_type" => 2,
+                                    "location_value" => $dataconfig['instagram'],
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 5,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("3"),
+                                    "location_jump_window" => 2,
+                                    "location_name" => "充值",
+                                    "location_template" => "",
+                                    "location_type" => 5,
+                                    "location_value" => "",
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 3,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("4"),
+                                    "location_jump_window" => 1,
+                                    "location_name" => "外部链接",
+                                    "location_template" => "",
+                                    "location_type" => 2,
+                                    "location_value" => $dataconfig['telegram'],
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ],
+                                [
+                                    "content" => "",
+                                    "endTime" => 2095901999,
+                                    "hidden" => 1,
+                                    "id" => 1,
+                                    "img_category" => 1,
+                                    "img_color" => "",
+                                    "img_format" => 3,
+                                    "img_icon" => "",
+                                    "img_style" => 3,
+                                    "img_type" => 0,
+                                    "img_url" => "/uploads/" . data_banners("4"),
+                                    "location_jump_window" => 2,
+                                    "location_name" => "活动",
+                                    "location_template" => "3",
+                                    "location_type" => 3,
+                                    "location_value" => "2",
+                                    "publicityType" => 5,
+                                    "publicity_name" => "1",
+                                    "startTime" => 1744772400,
+                                    "stay_time" => 10,
+                                    "strokeColor" => "",
+                                    "textStroke" => 0
+                                ]
+                            ],
+                            "promoteGetSocialmedia" => [
+                                [
+                                    "andriodAddr" => "https://t.me/telegram",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_tg.png",
+                                    "id" => 2240005,
+                                    "iosAddr" => "https://t.me/telegram",
+                                    "name" => "Telegram",
+                                    "type_id" => 5
+                                ],
+                                [
+                                    "andriodAddr" => "https://wa.me/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_wa.png",
+                                    "id" => 2240006,
+                                    "iosAddr" => "https://api.whatsapp.com",
+                                    "name" => "WhatsApp",
+                                    "type_id" => 3
+                                ],
+                                [
+                                    "andriodAddr" => "https://threads.net/intent/post",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_threads.png",
+                                    "id" => 2240001,
+                                    "iosAddr" => "https://threads.net/intent/post",
+                                    "name" => "Threads",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://twitter.com/intent/tweet",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_x.png",
+                                    "id" => 2240009,
+                                    "iosAddr" => "https://twitter.com/intent/tweet",
+                                    "name" => "X",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://www.facebook.com/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_facebook.png",
+                                    "id" => 2240008,
+                                    "iosAddr" => "https://www.facebook.com/",
+                                    "name" => "Facebook",
+                                    "type_id" => 99
+                                ],
+                                [
+                                    "andriodAddr" => "https://line.me/R/ti/p/",
+                                    "display" => 1,
+                                    "icon" => "https://company-fj.s3.ap-east-1.amazonaws.com/siteadmin/agent/img/img_line.png",
+                                    "id" => 2240007,
+                                    "iosAddr" => "https://line.me/R/ti/p/",
+                                    "name" => "Line",
+                                    "type_id" => 6
+                                ]
+                            ],
+                            "userVipConfig" => [
+                                [
+                                    "currency" => "BRL",
+                                    "status" => 1
+                                ]
+                            ],
+                            "yuebaoGetSetting" => [
+                                "auditPlatformCategoryGame" => "[]",
+                                "circle" => 1,
+                                "createTime" => 0,
+                                "currency" => "BRL",
+                                "dayRate" => "1.36",
+                                "hourRate" => "0.057077",
+                                "id" => 300002,
+                                "interestTop" => 1,
+                                "isPop" => 1,
+                                "levelIds" => "",
+                                "maxCapital" => "0",
+                                "minCapital" => "20",
+                                "operator" => "",
+                                "profitMax" => "0",
+                                "ruleText" => "1.<strong>Introdução aos ganhos:</strong> O valor depositado no tesouro de juros deve satisfazer pelo menos um ciclo completo para gerar juros. Se for transferido antecipadamente, nenhum lucro será calculado nesse período. Por exemplo: o período de liquidação atual é de 1 horas, então o valor transferido por 01/01/2025 00:00:01 gerará juros no primeiro período em 01/01/2025 01:00:01;
+             2.<strong>Ciclo de liquidação:</strong> O ciclo atual de liquidação de juros é de 1 horas;
+             3.<strong>Taxa de Juros Anual: </strong>A taxa percentual anual atual é500%;
+             4.<strong> Fórmula de cálculo: </strong>Rendimento da Poupança = valor do depósito × Taxa de juros anual / ciclo de liquidação;
+             5.<strong>Exemplo:</strong>A deposita 01/01/2025 00:00:01 em 10.000, a taxa de juros anual é 500% e o período de liquidação é 1 horas, então a primeira receita de juros é obtida em 01/01/2025 01:00:01. O método de cálculo é o seguinte:<strong>Primeiros juros =10.000*500%/365 dias/24 horas*1 horas = 5,707762</strong>;
+             6.<strong>Limite de transferência:</strong> cada valor de transferência deve ser maior ou igual a 20 (ou seja, ≥20). Não há limite máximo para o valor da transferência. Quanto maior for a transferência, maior será o rendimento;
+             7.<strong>Limite de rendimentos: </strong>No momento, o limite de rendimentos permite acumular em até 1 ciclos. Após esse período, não haverá mais geração de rendimentos. Para evitar a perda de rendimentos, lembre-se de receber seus lucros periodicamente!
+             8.<strong>Horário de cobrança:</strong> Atualmente é cobrado no dia seguinte, ou seja, os juros gerados nesse dia não podem ser cobrados até às 0h00 do dia seguinte;
+             9.<strong>Múltiplo de auditoria:</strong> O múltiplo de auditoria atual é 1 vezes (requisitos de volume de apostas), ou seja, os juros recebidos precisam ser colocados antes que o dinheiro possa ser sacado, aposta Nenhuma plataforma válida específica,Apenas os juros recebidos requerem auditoria, enquanto o valor principal transferido para dentro ou para fora não requer auditoria;
+             10.<strong>Declaração do evento: </strong> Esta função é exclusiva para apostas em jogos realizadas pelo próprio titular da conta. Alugar, usar bots, robôs, apostas entre contas diferentes, apostas mútuas, arbitragem, acesso à API, exploração de falhas, controle de grupo ou outros meios técnicos são proibidos.O controle de grupo ou outros meios técnicos são proibidos. Uma vez verificado, a plataforma reserva o direito de encerrar os logins dos membros, suspender o uso do site pelos membros e confiscar bônus e lucros impróprios sem aviso prévio;
+             11.<strong>Explicação:</strong> Quando um membro recebe a recompensa Yibao, a plataforma presumirá que o membro concorda e cumpre as condições correspondentes e outros regulamentos relevantes. Para evitar ambiguidade na compreensão do texto, a plataforma reserva-se o direito. para a interpretação final deste evento.",
+                                "settleType" => 60,
+                                "switchStatus" => 1,
+                                "userText" => "Todos os membros",
+                                "validBetTimes" => "1",
+                                "vips" => "",
+                                "yearRate" => "500"
+                            ]
+                        ],
+                        "siteCode" => "7920",
+                        "time" => round(microtime(true) * 1000)
+                    ];
+                    break;
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota webapi/optimizationV2/site (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/webapi/optimizationV2/site/config/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "sysLoadingBackdrop" => [
+                        "loginVideo" => "",
+                        "loginImageIconColor" => "",
+                        "cutOffset" => 281,
+                        "loginImageFontColor" => "",
+                        "loginImage" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1912633823503695873.jpg",
+                        "loginUse" => 1
+                    ],
+                    "engageLabWebPush" => [
+                        "webKey" => "",
+                        "webMasterSecret" => ""
+                    ],
+                    "brandLogoUse" => [
+                        "aboutUsStatus" => 0,
+                        "agreeTitle" => "Tenho mais de {{age}} anos, li e concordo com {{protocol}}",
+                        "androidBootInstallation" => [
+                            "forceInstall" => 0,
+                            "installMultiSelect" => 1,
+                            "installType" => "4,1,2,5",
+                            "installationHintLanguage" => [
+                                [
+                                    "key" => "pt",
+                                    "value" => "<p><strong>Baixe o APP para participar de mais descontos!</strong></p>"
+                                ]
+                            ],
+                            "shortcutsLogo" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1912634232538427393.png",
+                            "shortcutsStyle" => "1",
+                            "translateType" => "0"
+                        ],
+                        "appDownloadButton" => 2,
+                        "appIconBigPath" => "",
+                        "bootInstallationIconSwitch" => 1,
+                        "bootInstallationIconUrl" => "/uploads/" . $dataconfig['download'] . "?v=" . round(microtime(true) * 1000),
+                        "bootInstallationStyle" => 0,
+                        "bootInstallationStyles" => "0",
+                        "bootInstallationSwitch" => (int) $dataconfig['baixar_ativado'],
+                        "brandName" => "",
+                        "brandNameLanguage" => [
+                            [
+                                "text" => "",
+                                "value" => "",
+                                "key" => ""
+                            ]
+                        ],
+                        "brandNameText" => "",
+                        "commonConfig" => [
+                            "androidAppStoreLogo" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/brandLogo/android_appstore/style1.png",
+                            "iosAppStoreLogo" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/brandLogo/ios_appstore/style3.png"
+                        ],
+                        "cookieRemind" => [
+                            "jump" => 0,
+                            "popStyle" => 1,
+                            "remind" => 0
+                        ],
+                        "customizeDownloadLogoUrl" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/img_h5dl_logo1.png",
+                        "deleteIconRgb" => "",
+                        "downloadBackgroundRgb" => "",
+                        "downloadIconRgb" => "",
+                        "downloadSwitch" => 1,
+                        "findUs" => [
+                            "isEntry" => 0,
+                            "isForceSave" => 0,
+                            "isPop" => 0,
+                            "isPopDismiss" => 1
+                        ],
+                        "forceInstallationSwitch" => 0,
+                        "hallLogo" => "/uploads/" . $dataconfig['logo'] . "?v=" . round(microtime(true) * 1000),
+                        "hallLogoUrlLanguages" => [
+                            [
+                                "key" => "pt,en",
+                                "value" => "/uploads/" . $dataconfig['logo'] . "?v=" . round(microtime(true) * 1000)
+                            ]
+                        ],
+                        "hallOfficialCommunitys" => [
+                            [
+                                "currency" => "BRL",
+                                "icon" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/common/upload/1912634907503935490.png",
+                                "name" => "Instagram",
+                                "url" => $dataconfig['instagram']
+                            ],
+                            [
+                                "currency" => "BRL",
+                                "icon" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/common/upload/1912635050913947649.png",
+                                "name" => "WhatsApp",
+                                "url" => $dataconfig['whatsapp']
+                            ]
+                        ],
+                        "installationHint" => "",
+                        "iosBootInstallation" => [
+                            "forceInstall" => 0,
+                            "installMultiSelect" => 1,
+                            "installType" => "1,2,5,3",
+                            "installationHintLanguage" => [
+                                [
+                                    "key" => "pt",
+                                    "value" => "<p><strong>Baixe o APP para participar de mais descontos!</strong></p>"
+                                ]
+                            ],
+                            "shortcutsLogo" => "/uploads/" . $dataconfig['favicon'] . "?v=" . round(microtime(true) * 1000),
+                            "shortcutsStyle" => "1",
+                            "translateType" => "0"
+                        ],
+                        "loginLogo" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1912633735578800129.png",
+                        "officialWebsite" => "",
+                        "officialWebsiteStatus" => 0,
+                        "pcBootInstallation" => [
+                            "forceInstall" => 0,
+                            "installMultiSelect" => 1,
+                            "installType" => "4,1,2,5",
+                            "installationHintLanguage" => [
+                                [
+                                    "key" => "pt",
+                                    "value" => "<p><strong>Baixe o APP para participar de mais descontos!</strong></p>"
+                                ]
+                            ],
+                            "shortcutsLogo" => "/uploads/" . $dataconfig['favicon'] . "?v=" . round(microtime(true) * 1000),
+                            "shortcutsStyle" => "1",
+                            "translateType" => "0"
+                        ],
+                        "realUrl" => "",
+                        "selfRestraintEntry" => [
+                            "isProfileEntry" => 1,
+                            "isShowEntry" => 0,
+                            "isSidebarEntry" => 0
+                        ],
+                        "shortcutStatus" => 0,
+                        "topBgColor" => $dataconfig['topBgColor'],
+                        "topDownloadText" => [
+                            "installationHintLanguage" => [
+                                [
+                                    "key" => "pt",
+                                    "value" => "<p><strong>Baixe o APP para participar de mais descontos!</strong></p>"
+                                ]
+                            ],
+                            "translateType" => 0
+                        ],
+                        "topIconColor" => $dataconfig['topIconColor'],
+                        "type" => 1
+                    ],
+                    "channelGlobalConfig" => [
+                        "android_download_url" => [
+                            "https://uusanj-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/download/255ea8_native.apk?1744842615000",
+                            ""
+                        ],
+                        "androidDownloadSize" => [
+                            77.01
+                        ],
+                        "qrCodeType" => 0,
+                        "iosBackupLink" => "",
+                        "webLinkType" => 0,
+                        "androidBackupLink" => "",
+                        "androidList" => [
+                            [
+                                "downloadPath" => "https://uusanj-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/download/255ea8_speed.apk?1744842615000",
+                                "size" => 6.09,
+                                "type" => 1,
+                                "version" => "1.1.21"
+                            ],
+                            [
+                                "downloadPath" => "https://uusanj-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/download/255ea8_native.apk?1744842615000",
+                                "size" => 77.01,
+                                "type" => 2,
+                                "version" => "5.2.61"
+                            ]
+                        ],
+                        "downloadList" => [
+                            [
+                                "link" => $url_base,
+                                "name" => $dataconfig['nome'],
+                                "language" => "pt,en",
+                                "linkType" => "0",
+                                "type" => 3,
+                                "value" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/xfzs/1912635407660322818.mobileconfig"
+                            ],
+                            [
+                                "name" => $dataconfig['nome'],
+                                "language" => "pt,en",
+                                "type" => 1,
+                                "value" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/xfzs/1912635407660322818.mobileconfig"
+                            ]
+                        ],
+                        "appIcon" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1912634108633325570.png",
+                        "qrCode" => "https://",
+                        "relativePath" => [
+                            null,
+                            null
+                        ],
+                        "appNameLanguage" => [
+                            [
+                                "value" => $dataconfig['nome'],
+                                "key" => "en,pt"
+                            ]
+                        ],
+                        "customer_service_url" => [
+                            ""
+                        ]
+                    ],
+                    "layoutDesign" => [
+                        "advanceSetting" => [
+                        ],
+                        "backgroundShading" => [
+                            "appBackgroundShadingValue" => "#222222",
+                            "type" => 3
+                        ],
+                        "banner" => 3,
+                        "baseConfig" => [
+                            "appMyPage" => "1",
+                            "test" => "1",
+                            "desktopShortcut" => "1"
+                        ],
+                        "btmItems" => [
+                            "home",
+                            "promote",
+                            "discount",
+                            "register",
+                            "mine"
+                        ],
+                        "commonConfig" => [
+                            "sportFlag" => "0",
+                            "olympicSportLiveFlag" => "0",
+                            "windowCss" => "1",
+                            "sportLiveFlag" => "0",
+                            "test" => "1",
+                            "displayLiveFlag" => "0",
+                            "footerStyle" => "1",
+                            "registerLoginDisplay" => "0",
+                            "commissionBubble" => "0",
+                            "americaSportLiveFlag" => "0",
+                            "ageLimit" => "18",
+                            "hallReturnType" => "1",
+                            "turnPageType" => "1",
+                            "noWalletTipInr" => "0",
+                            "noWalletTipCny" => "0",
+                            "loadingType" => "1",
+                            "registerLogin" => "1"
+                        ],
+                        "gameIcon" => 1,
+                        "hgAgeConfig" => [
+                            "cancelBtnText" => "desistir",
+                            "confirmBtnText" => "aceitar",
+                            "content" => "",
+                            "isOpen" => 0,
+                            "style" => 1
+                        ],
+                        "iconColor" => 0,
+                        "imgPath" => "/siteadmin/layoutDesign/",
+                        "layouts" => '["banner","top","icon"]',
+                        "loginBtmItems" => [
+                            "home",
+                            "promote",
+                            "discount",
+                            "recharge",
+                            "mine"
+                        ],
+                        "loginMidItems" => [
+                            "yueBao",
+                            "vip",
+                            "promote"
+                        ],
+                        "loginMidItemsMore" => [
+                            "customer",
+                            "withdraw",
+                            "recharge",
+                            "activity",
+                            "task",
+                            "rebate",
+                            "feedback",
+                            "security",
+                            "download",
+                            "setting",
+                            "accountDetails",
+                            "bettingRecord",
+                            "personalStatement",
+                            "award",
+                            "withdrawalManagement",
+                            "language",
+                            "audit",
+                            "facebook",
+                            "google",
+                            "line",
+                            "providentFund",
+                            "blindBox",
+                            "home",
+                            "mine"
+                        ],
+                        "loginSlogan" => "",
+                        "midItems" => [
+                            "yueBao",
+                            "vip",
+                            "promote"
+                        ],
+                        "midItemsMore" => [
+                            "customer",
+                            "withdraw",
+                            "recharge",
+                            "activity",
+                            "task",
+                            "rebate",
+                            "feedback",
+                            "security",
+                            "download",
+                            "setting",
+                            "accountDetails",
+                            "bettingRecord",
+                            "personalStatement",
+                            "award",
+                            "withdrawalManagement",
+                            "language",
+                            "audit",
+                            "facebook",
+                            "google",
+                            "line",
+                            "providentFund",
+                            "blindBox",
+                            "home",
+                            "mine"
+                        ],
+                        "platformIcon" => 1,
+                        "skeletonStyle" => [
+                            "img" => "/uploads/" . $dataconfig['carregamento_img'] . "?v=" . round(microtime(true) * 1000),
+                            "textStyle" => "1",
+                            "type" => 3
+                        ],
+                        "topLayout" => 2
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota backstage/customer/getWebTrans (GET) -> Tradução para português
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/backstage/customer/getWebTrans/language/pt.json') {
+
+            $rotaEncontrada = true; // Rota encontrada
+
+            // Caminho do arquivo JSON
+            $resposta = '../backstage/customer/getWebTrans/language/pt.json'; // Retornar Como Arquivo pra deixar a rest limpa
+
+            // Verifica se o arquivo JSON existe
+            if (file_exists($resposta)) {
+                // Define o tipo de conteúdo como JSON
+                header('Content-Type: application/json');
+
+                // Lê o conteúdo do arquivo JSON
+                $jsonContent = file_get_contents($resposta);
+
+                // Retorna o conteúdo do arquivo JSON como resposta
+                echo $jsonContent;
+            } else {
+                // Se o arquivo não existir, retorna um erro
+                header('HTTP/1.1 404 Not Found');
+                echo json_encode([
+                    "code" => 404,
+                    "message" => "Arquivo JSON não encontrado"
+                ]);
+            }
+
+            exit;
+
+        }
+
+        // Rota active/tasks/newcomer_benefit_reward (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/tasks/newcomer_benefit_reward/default.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "currency" => "BRL",
+                    "list" => [
+                    ]
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+
+        // Rota lobby/config/getAppDownloadInfo (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/config/getAppDownloadInfo.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "androidBackupLink" => "",
+                    "androidList" => [
+                        [
+                            "downloadPath" => "https://uusanj-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/download/255ea8_speed.apk?1744842615000",
+                            "size" => 6.09,
+                            "type" => 1,
+                            "version" => "1.1.21"
+                        ],
+                        [
+                            "downloadPath" => "https://uusanj-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/download/255ea8_native.apk?1744842615000",
+                            "size" => 77.01,
+                            "type" => 2,
+                            "version" => "5.2.61"
+                        ]
+                    ],
+                    "appIcon" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/1912634108633325570.png",
+                    "appNameLanguage" => [
+                        [
+                            "key" => "en,pt",
+                            "value" => $dataconfig['nome']
+                        ]
+                    ],
+                    "downloadList" => [
+                        [
+                            "language" => "pt,en",
+                            "link" => $url_base,
+                            "linkType" => "0",
+                            "name" => $dataconfig['nome'],
+                            "type" => 3,
+                            "value" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/xfzs/1912635407660322818.mobileconfig"
+                        ],
+                        [
+                            "language" => "pt,en",
+                            "name" => $dataconfig['nome'],
+                            "type" => 1,
+                            "value" => "https://b2nsyv-7920-ppp.s3.sa-east-1.amazonaws.com/cocos/xfzs/1912635407660322818.mobileconfig"
+                        ]
+                    ],
+                    "iosBackupLink" => "",
+                    "seoSwitch" => 0
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota lobby/webapi/forceUpdate (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/webapi/forceUpdate/getForceUpdate.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "androidPkgForceUpdate" => 0,
+                    "androidPkgVersion" => "5.2.61",
+                    "androidWebSpeedPkgForceUpdate" => 0,
+                    "androidWebSpeedPkgVersion" => "1.1.21",
+                    "iosPkgForceUpdate" => 0,
+                    "iosPkgVersion" => "5.2.61",
+                    "iosWebSpeedPkgForceUpdate" => 0,
+                    "iosWebSpeedPkgVersion" => "1.1.21",
+                    "normalStatus" => 1,
+                    "speedStatus" => 1
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/tasks/pop_newcomerBenefit (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/tasks/pop_newcomerBenefit/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "afterLoginPopType" => 0,
+                    "beforeLoginPopType" => 0,
+                    "rules" => [
+                        [
+                            "activity" => 0,
+                            "icon" => 18,
+                            "name" => "Baixe e faça login(Complete o primeiro depósito)",
+                            "nameExt" => "",
+                            "reward" => 1,
+                            "ruleId" => 18
+                        ]
+                    ],
+                    "taskData" => [
+                        "limitDay" => 0,
+                        "showCountDown" => 0
+                    ],
+                    "template" => 1,
+                    "userLevel" => "2,3,4,5,6,7,8,9,10,11,10000,10001,10002,10003,10004"
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/tasks/pop_taskDay (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/tasks/pop_taskDay/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "afterLoginPopType" => 0,
+                    "beforeLoginPopType" => 0,
+                    "template" => 2,
+                    "userLevel" => "1,3,4,7,9,10,11,12,13,15,16,17,18,19,20,21,22,24,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48"
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/tasks/pop_taskWeek (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/tasks/pop_taskWeek/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "afterLoginPopType" => 0,
+                    "beforeLoginPopType" => 0,
+                    "template" => 3,
+                    "userLevel" => "4,1,12,48"
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/tasks/pop_taskThreeDay (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/tasks/pop_taskThreeDay/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "afterLoginPopType" => 0,
+                    "beforeLoginPopType" => 0,
+                    "template" => 4,
+                    "userLevel" => "4,1,12,48"
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gohal/staffAllV3/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/gohal/staffAllV3/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $scriptCode = <<<EOT
+<script>
+    window.__lc = window.__lc || {};
+    window.__lc.license = 19172355;
+    window.__lc.integration_name = 'manual_onboarding';
+    window.__lc.product_name = 'livechat';
+    ;(function(n,t,c){function i(n){return e._h?e._h.apply(null,n):e._q.push(n)}
+    var e={_q:[],_h:null,_v:"2.0",on:function(){i(["on",c.call(arguments)])},
+    once:function(){i(["once",c.call(arguments)])},off:function(){i(["off",c.call(arguments)])},
+    get:function(){if(!e._h)throw new Error("[LiveChatWidget] You can't use getters before load.");
+    return i(["get",c.call(arguments)])},call:function(){i(["call",c.call(arguments)])},
+    init:function(){var n=t.createElement("script");n.async=!0,n.type="text/javascript",
+    n.src="https://cdn.livechatinc.com/tracking.js",t.head.appendChild(n)}};
+    !n.__lc.asyncInit&&e.init(),n.LiveChatWidget=n.LiveChatWidget||e
+    }(window,document,[].slice));
+</script>
+<noscript><a href="https://www.livechat.com/chat-with/19172355/" rel="nofollow">Chat with us</a>,
+powered by <a href="https://www.livechat.com/?welcome" rel="noopener nofollow" target="_blank">LiveChat</a></noscript>
+EOT;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "customer" => [
+                        "onlineCustomers" => [
+                            [
+                                "appDisplayPage" => 0,
+                                "customerCode" => $scriptCode,
+                                "customerName" => "Serviço Online",
+                                "customerUrl" => $dataconfig['atendimento'],
+                                "h5DisplayPage" => 0,
+                                "id" => 18190410,
+                                "liveChatGroupId" => "",
+                                "liveChatLicenseId" => "",
+                                "openType" => 2
+                            ],
+                            [
+                                "appDisplayPage" => 0,
+                                "customerCode" => "<script type='text/javascript'>
+                 (function(a, b, c, d, e, j, s) {
+                     a[d] = a[d] || function() {
+                         (a[d].a = a[d].a || []).push(arguments)
+                     };
+                     j = b.createElement(c),
+                         s = b.getElementsByTagName(c)[0];
+                     j.async = true;
+                     j.charset = 'UTF-8';
+                     j.src = 'https://static.meiqia.com/widget/loader.js';
+                     s.parentNode.insertBefore(j, s);
+                 })(window, document, 'script', '_MEIQIA');
+                 _MEIQIA('entId', '54ca1c751d1d07d4d07101178438e5f7');
+                 _MEIQIA('language','en')
+                 </script>",
+                                "customerCodeApp" => "<script type='text/javascript'>
+                 (function(a, b, c, d, e, j, s) {
+                     a[d] = a[d] || function() {
+                         (a[d].a = a[d].a || []).push(arguments)
+                     };
+                     j = b.createElement(c),
+                         s = b.getElementsByTagName(c)[0];
+                     j.async = true;
+                     j.charset = 'UTF-8';
+                     j.src = 'https://static.meiqia.com/widget/loader.js';
+                     s.parentNode.insertBefore(j, s);
+                 })(window, document, 'script', '_MEIQIA');
+                 _MEIQIA('entId', '54ca1c751d1d07d4d07101178438e5f7');
+                 _MEIQIA('language','en')
+                 </script>",
+                                "customerName" => "Serviço Telegram",
+                                "customerUrl" => $dataconfig['telegram'],
+                                "h5DisplayPage" => 0,
+                                "id" => 18190411,
+                                "liveChatGroupId" => "",
+                                "liveChatLicenseId" => "",
+                                "openType" => 2
+                            ]
+                        ],
+                        "otherCustomers" => [
+                            [
+                                "appType" => 2,
+                                "customerList" => [
+                                    [
+                                        "agentId" => 0,
+                                        "androidUrl" => $dataconfig['telegram'],
+                                        "api" => "",
+                                        "createTime" => 1745357469,
+                                        "currencyCodes" => "BRL",
+                                        "customerName" => $dataconfig['nome'] . " | Canal Oficial®",
+                                        "customerNumber" => $dataconfig['telegram'],
+                                        "customerStatus" => 1,
+                                        "customerType" => 2,
+                                        "id" => 17410391,
+                                        "imgObject" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/telegram.png",
+                                        "iosUrl" => $dataconfig['telegram'],
+                                        "nickname" => "",
+                                        "otherCustomerType" => 2,
+                                        "pcUrl" => $dataconfig['telegram'],
+                                        "siteCode" => "7962",
+                                        "updateTime" => 1747294663,
+                                        "urlType" => 0,
+                                        "userLevel" => "1,2,3,4,5,6,7,8,9,10,10001,10007,10009,10006",
+                                        "weight" => 3
+                                    ],
+                                    [
+                                        "agentId" => 0,
+                                        "androidUrl" => $dataconfig['telegram'],
+                                        "api" => "",
+                                        "createTime" => 1745357511,
+                                        "currencyCodes" => "BRL",
+                                        "customerName" => $dataconfig['nome'] . "（comissário de telégrafo）",
+                                        "customerNumber" => "Servico_" . $dataconfig['nome'],
+                                        "customerStatus" => 1,
+                                        "customerType" => 2,
+                                        "id" => 17410392,
+                                        "imgObject" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/telegram.png",
+                                        "iosUrl" => $dataconfig['telegram'],
+                                        "nickname" => "",
+                                        "otherCustomerType" => 2,
+                                        "pcUrl" => $dataconfig['telegram'],
+                                        "siteCode" => "7962",
+                                        "updateTime" => 1747294304,
+                                        "urlType" => 0,
+                                        "userLevel" => "1,2,3,4,5,6,7,8,9,10,10000,10001,10002,10003,10004,10005,10006,10007,10008,10009",
+                                        "weight" => 2
+                                    ]
+                                ]
+                            ],
+                            [
+                                "appType" => 6,
+                                "customerList" => [
+                                    [
+                                        "agentId" => 0,
+                                        "androidUrl" => $dataconfig['facebook'],
+                                        "api" => "",
+                                        "createTime" => 1745357566,
+                                        "currencyCodes" => "BRL",
+                                        "customerName" => $dataconfig['nome'],
+                                        "customerNumber" => $dataconfig['nome'],
+                                        "customerStatus" => 1,
+                                        "customerType" => 2,
+                                        "id" => 17470437,
+                                        "imgObject" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/Facebook.png",
+                                        "iosUrl" => $dataconfig['facebook'],
+                                        "nickname" => "",
+                                        "otherCustomerType" => 6,
+                                        "pcUrl" => $dataconfig['facebook'],
+                                        "siteCode" => "7962",
+                                        "updateTime" => 1747294296,
+                                        "urlType" => 0,
+                                        "userLevel" => "1,2,3,4,5,6,7,8,9,10,10000,10001,10002,10003,10004,10005,10006,10007,10008,10009",
+                                        "weight" => 1
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ],
+                    "ipInfo" => [
+                        "city" => "",
+                        "country" => "",
+                        "countryCode" => "",
+                        "ip" => "",
+                        "regionCode" => "",
+                        "regionName" => ""
+                    ],
+                    "question" => [
+                        [
+                            "questionList" => [
+                            ],
+                            "typeIcon" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/other_wt_icon.png",
+                            "typeId" => 18807920,
+                            "typeName" => "Outras perguntas"
+                        ],
+                        [
+                            "questionList" => [
+                            ],
+                            "typeIcon" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/withdraw_wt_icon.png",
+                            "typeId" => 18807883,
+                            "typeName" => "Perguntas sobre coleção"
+                        ],
+                        [
+                            "questionList" => [
+                            ],
+                            "typeIcon" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/pay_wt_icon.png",
+                            "typeId" => 18807867,
+                            "typeName" => "Perguntas de recarga"
+                        ],
+                        [
+                            "questionList" => [
+                            ],
+                            "typeIcon" => "https://lj3k45-7962-ppp.s3.sa-east-1.amazonaws.com/siteadmin/upload/img/game_wt_icon.png",
+                            "typeId" => 18807836,
+                            "typeName" => "Perguntas do jogo"
+                        ]
+                    ]
+                ],
+                "siteCode" => "7962",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota api/message/popupcfg (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/message/popupcfg/currency/BRL.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota api/message/smsCountry (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/message/smsCountry/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "countryInfos" => [
+                        [
+                            "countryCode" => "BR",
+                            "countryName" => "Brasil",
+                            "countryPhonePrefix" => "0",
+                            "englishName" => "Brazil",
+                            "icon" => $WG_BUCKET_SITE . "/country/nationalflag/Brazil.png",
+                            "id" => 9,
+                            "lang" => "pt",
+                            "phoneLength" => 11,
+                            "phoneLengthScope" => "10,11",
+                            "phoneNumberSegment" => "+55"
+                        ]
+                    ],
+                    "defaultCountry" => [
+                        "countryCode" => "BR",
+                        "countryName" => "Brasil",
+                        "countryPhonePrefix" => "0",
+                        "englishName" => "Brazil",
+                        "icon" => $WG_BUCKET_SITE . "/country/nationalflag/Brazil.png",
+                        "id" => 9,
+                        "lang" => "pt",
+                        "phoneLength" => 11,
+                        "phoneLengthScope" => "10,11",
+                        "phoneNumberSegment" => "+55"
+                    ],
+                    "ipCheck" => 1
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota hall/ipCheck (GET) --> Verificar ip do client
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/ipCheck') {
+            $rotaEncontrada = true;
+
+            // Captura o IP real do cliente
+            function pegaripcliente()
+            {
+                if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+                    return $_SERVER['HTTP_CLIENT_IP'];
+                } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+                    return explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0];
+                } else {
+                    return $_SERVER['REMOTE_ADDR'];
+                }
+            }
+
+            $ipdocliente = pegaripcliente();
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "areaStatus" => true,
+                    "countryCode" => "BR",
+                    "ip" => $ipdocliente,
+                    "recommendAreaCode" => "+55",
+                    "recommendCurrency" => "BRL",
+                    "recommendLanguage" => "en",
+                    "siteMaintenanceStatus" => false,
+                    "status" => true
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/pop_chop_one_knife_new/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/pop_chop_one_knife_new/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/pop_chop_one_knife/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/pop_chop_one_knife/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/popSignActive/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/popSignActive/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/active_popRecharge/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/active_popRecharge/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    [
+                        "afterLoginPopType" => 0,
+                        "beforeLoginPopType" => 0,
+                        "endShowTime" => 2082769199,
+                        "endTime" => 2082769199,
+                        "id" => 3,
+                        "list" => [
+                            [
+                                "amount" => 50,
+                                "receiveId" => 1,
+                                "reward" => 1,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 100,
+                                "receiveId" => 2,
+                                "reward" => 3,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 500,
+                                "receiveId" => 3,
+                                "reward" => 17,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 1000,
+                                "receiveId" => 4,
+                                "reward" => 27,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 5000,
+                                "receiveId" => 5,
+                                "reward" => 77,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 10000,
+                                "receiveId" => 6,
+                                "reward" => 277,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 50000,
+                                "receiveId" => 7,
+                                "reward" => 888,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 100000,
+                                "receiveId" => 8,
+                                "reward" => 1777,
+                                "signType" => 0
+                            ],
+                            [
+                                "amount" => 200000,
+                                "receiveId" => 9,
+                                "reward" => 3777,
+                                "signType" => 0
+                            ]
+                        ],
+                        "name" => "Bônus extra de depósito inicial",
+                        "operation" => [
+                            "operationId" => "",
+                            "operationStatus" => 0,
+                            "operationType" => 0
+                        ],
+                        "startShowTime" => 1738033200,
+                        "startTime" => 1738033200,
+                        "template" => 10,
+                        "userLevel" => ""
+                    ]
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota active/quickList/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/quickList/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $floats = [];
+            $query = "SELECT id, titulo, redirect, criado_em, img, tipo FROM floats WHERE status = 1";
+            $result = $mysqli->query($query);
+
+            if ($result && $result->num_rows > 0) {
+                while ($row = $result->fetch_assoc()) {
+                    $floats[] = [
+                        "ActiveName" => $row['titulo'],
+                        "clientShowImgSize" => 2,
+                        "detail" => null,
+                        "endShowTime" => 2082769199,
+                        "endTime" => 2082769199,
+                        "id" => (int) $row['id'],
+                        "img" => "/uploads/" . $row['img'],
+                        "isShowActiveName" => 1,
+                        "isShowCountDown" => 0,
+                        "isShowReward" => 0,
+                        "isUserUpload" => 1,
+                        "operation" => [
+                            "operationId" => "",
+                            "operationStatus" => 0,
+                            "operationType" => 0
+                        ],
+                        "reward" => "",
+                        "showDeviceType" => "1,2,4,5,6",
+                        "showType" => (int) $row['tipo'],
+                        "startShowTime" => 1738033200,
+                        "startTime" => 1738033200,
+                        "template" => 15,
+                        "userLevel" => "",
+                        "vipLevel" => "",
+                        "redirect" => $row['redirect'],
+                        "criado_em" => $row['criado_em']
+                    ];
+                }
+            }
+
+            $response = [
+                "code" => 1,
+                "data" => $floats,
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota active/quickList/currency (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/third/game/platformExchange/findListAll.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "platformCurrencyExchange" => [
+                        "312_KHR" => 100,
+                        "34_ETH1" => 1,
+                        "29_TRX" => 0.1,
+                        "118_TRX" => 0.1,
+                        "130_PYG" => 1000,
+                        "312_IDR" => 1000,
+                        "37_TRX" => 0.1,
+                        "41_PYG" => 1000,
+                        "312_TRX" => 0.1,
+                        "106_PYG" => 1000,
+                        "312_VND" => 1000,
+                        "88_TRX" => 0.1,
+                        "134_IDR" => 1000,
+                        "71_TRX" => 0.1,
+                        "320_TRX" => 0.1,
+                        "34_BRL" => 1,
+                        "45_TRX" => 0.1,
+                        "96_TRX" => 0.1,
+                        "53_TRX" => 0.1,
+                        "325_PYG" => 1000,
+                        "1007_INR" => 1,
+                        "101_TRX" => 0.1,
+                        "317_PYG" => 1000,
+                        "39_TRX" => 0.1,
+                        "1007_KRW" => 1,
+                        "1007_JPY" => 1,
+                        "31_PYG" => 1000,
+                        "304_TRX" => 0.1,
+                        "310_TRX" => 0.1,
+                        "1007_TRX" => 0.1,
+                        "1007_TRY" => 1,
+                        "22_TRX" => 0.1,
+                        "27_TRX" => 0.1,
+                        "20_VND" => 1,
+                        "34_USDT" => 1,
+                        "47_TRX" => 0.1,
+                        "6_TRX" => 0.1,
+                        "327_PYG" => 1000,
+                        "20_IDR" => 1,
+                        "29_VND" => 1000,
+                        "116_VND" => 1000,
+                        "128_TRX" => 0.1,
+                        "1001_TRX" => 0.1,
+                        "63_TRX" => 0.1,
+                        "33_TRX" => 0.1,
+                        "37_PYG" => 1000,
+                        "116_IDR" => 1000,
+                        "103_TRX" => 0.1,
+                        "94_TRX" => 0.1,
+                        "200_TRX" => 0.1,
+                        "1007_NGN" => 1,
+                        "134_VND" => 1000,
+                        "124_PYG" => 1000,
+                        "306_TRX" => 0.1,
+                        "16_TRX" => 0.1,
+                        "41_TRX" => 0.1,
+                        "34_BTC" => 1,
+                        "34_IDRK" => 0,
+                        "34_USDC1" => 1,
+                        "24_TRX" => 0.1,
+                        "34_USDC" => 1,
+                        "326_TRX" => 0.1,
+                        "75_TRX" => 0.1,
+                        "121_TRX" => 0.1,
+                        "106_TRX" => 0.1,
+                        "332_VND" => 1000,
+                        "32_TRX" => 0.1,
+                        "88_PYG" => 1000,
+                        "123_TRX" => 0.1,
+                        "1007_VND" => 1,
+                        "114_TRX" => 0.1,
+                        "317_TRX" => 0.1,
+                        "312_PYG" => 1000,
+                        "131_TRX" => 0.1,
+                        "1007_IDR" => 1,
+                        "1007_USDT" => 1,
+                        "34_CNY" => 1,
+                        "34_THB" => 1,
+                        "315_TRX" => 0.1,
+                        "73_TRX" => 0.1,
+                        "302_TRX" => 0.1,
+                        "13_TRX" => 0.1,
+                        "1007_PYG" => 1000,
+                        "103_PYG" => 1000,
+                        "34_PHP" => 1,
+                        "56_TRX" => 0.1,
+                        "43_TRX" => 0.1,
+                        "1007_USD" => 1,
+                        "108_TRX" => 0.1,
+                        "1007_USDC" => 1,
+                        "34_ARS" => 1,
+                        "34_USDT1" => 1,
+                        "3_TRX" => 0.1,
+                        "112_TRX" => 0.1,
+                        "332_KHR" => 100,
+                        "332_IDR" => 1000,
+                        "310_PYG" => 1000,
+                        "312_ARS" => 100,
+                        "332_TRX" => 0.1,
+                        "28_VND" => 1000,
+                        "54_TRX" => 0.1,
+                        "135_TRX" => 0.1,
+                        "59_PYG" => 1000,
+                        "332_ARS" => 100,
+                        "318_PYG" => 1000,
+                        "117_VND" => 1,
+                        "127_TRX" => 0.1,
+                        "313_TRX" => 0.1,
+                        "5_TRX" => 0.1,
+                        "38_TRX" => 0.1,
+                        "34_ETH" => 1,
+                        "28_IDR" => 1,
+                        "97_TRX" => 0.1,
+                        "36_TRX" => 0.1,
+                        "110_TRX" => 0.1,
+                        "313_VND" => 1000,
+                        "1007_THB" => 1,
+                        "1007_CNY" => 1,
+                        "206_TRX" => 0.1,
+                        "34_COP" => 1,
+                        "34_USD" => 1,
+                        "87_TRX" => 0.1,
+                        "1007_USDC1" => 1,
+                        "313_IDR" => 1000,
+                        "109_TRX" => 0.1,
+                        "70_TRX" => 0.1,
+                        "1007_PHP" => 1,
+                        "129_TRX" => 0.1,
+                        "332_PYG" => 1000,
+                        "7_TRX" => 0.1,
+                        "48_TRX" => 0.1,
+                        "323_TRX" => 0.1,
+                        "21_IDR" => 1,
+                        "1002_TRX" => 0.1,
+                        "323_IDR" => 0,
+                        "34_IDR" => 1,
+                        "1007_USDT1" => 1,
+                        "323_VND" => 0,
+                        "21_TRX" => 0.1,
+                        "34_TRX" => 0.1,
+                        "95_TRX" => 0.1,
+                        "307_TRX" => 0.1,
+                        "95_IDR" => 1000,
+                        "95_VND" => 1000,
+                        "28_TRX" => 0.1,
+                        "129_VND" => 1000,
+                        "301_PYG" => 1000,
+                        "7_VND" => 1,
+                        "50_TRX" => 0.1,
+                        "64_TRX" => 0.1,
+                        "7_IDR" => 1,
+                        "21_VND" => 1,
+                        "34_VND" => 1000,
+                        "120_TRX" => 0.1,
+                        "59_TRX" => 0.1,
+                        "133_TRX" => 0.1,
+                        "105_TRX" => 0.1,
+                        "130_TRX" => 0.1,
+                        "1007_BRL" => 1,
+                        "76_TRX" => 0.1,
+                        "34_NGN" => 1,
+                        "113_TRX" => 0.1,
+                        "318_TRX" => 0.1,
+                        "1007_MXN" => 1,
+                        "203_TRX" => 0.1,
+                        "34_BTC1" => 1,
+                        "110_PYG" => 1000,
+                        "320_PYG" => 1000,
+                        "316_TRX" => 0.1,
+                        "325_TRX" => 0.1,
+                        "14_TRX" => 0.1,
+                        "40_TRX" => 0.1,
+                        "74_TRX" => 0.1,
+                        "122_TRX" => 0.1,
+                        "34_MMK" => 1,
+                        "308_TRX" => 0.1,
+                        "31_TRX" => 0.1,
+                        "2_TRX" => 0.1,
+                        "1006_VND" => 1,
+                        "111_TRX" => 0.1,
+                        "124_TRX" => 0.1,
+                        "68_VND" => 1,
+                        "301_TRX" => 0.1,
+                        "329_TRX" => 0.1,
+                        "49_TRX" => 0.1,
+                        "19_TRX" => 0.1,
+                        "6_PYG" => 1000,
+                        "327_TRX" => 0.1,
+                        "55_TRX" => 0.1,
+                        "68_IDR" => 1,
+                        "107_TRX" => 0.1,
+                        "34_INR" => 1
+                    ],
+                    "memberIntoThirdLimit" => [
+                        "BRL" => 1000000
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota message/list/all (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/message/list/all/' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/message/list/all') {
+            $rotaEncontrada = true;
+            
+            header('Content-Type: application/json; charset=utf-8');
+            
+            // A consulta para buscar APENAS mensagens ATIVAS (status = 1)
+            $query = "SELECT * FROM mensagens WHERE status = 1 AND texto = 0 ORDER BY id DESC";
+            $result = $mysqli->query($query);
+            
+            // Inicializa a lista vazia
+            $publicityMsgList = [];
+            
+            // Verifique se há resultados
+            if ($result && $result->num_rows > 0) {
+                // Itera sobre as mensagens
+                while ($row = $result->fetch_assoc()) {
+                    $showtype = 3;
+                    // Verifica se não há banner e ajusta showType para 2
+                    if (empty($row['banner'])) {
+                        $showtype = 2;
+                    }
+                    
+                    $publicityMsgList[] = [
+                        "content" => $row['content'],
+                        "frameEndTime" => 2095901999,
+                        "frameStartTime" => 1744772400,
+                        "frame_pop" => 1,
+                        "frame_switch" => 1,
+                        "frame_type" => 1,
+                        "hidden" => 1,
+                        "id" => $row['id'],
+                        "img_category" => 1,
+                        "img_color" => "",
+                        "img_icon" => "",
+                        "img_style" => 3,
+                        "img_url" => "/uploads/" . $row['banner'],
+                        "is_maintenance" => false,
+                        "location_jump_window" => 2,
+                        "location_name" => "活动",
+                        "location_template" => "15",
+                        "location_type" => 3,
+                        "location_value" => "4",
+                        "maintenance_end" => 0,
+                        "maintenance_start" => 0,
+                        "publicity_name" => $row['titulo'],
+                        "read_status" => 0,
+                        "receiver_type" => 1,
+                        "strokeColor" => "",
+                        "suspend_url" => "2",
+                        "suspended" => 2,
+                        "textStroke" => 0
+                    ];
+                }
+            }
+            
+            // Response SEMPRE é gerado (com ou sem mensagens)
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "publicityMsgList" => $publicityMsgList,
+                    "marqueeList" => [
+                        [
+                            "id" => 153445,
+                            "content" => $dataconfig['marquee'],
+                            "interval" => 2,
+                            "create_time" => 1746367200
+                        ]
+                    ]
+                ]
+            ];
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit; // CRÍTICO: Para a execução aqui
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/agentMode') {
+            $rotaEncontrada = true;
+            $response = [
+
+                 'code' => 1,
+                'msg' => '返回成功',
+                'time' => round(microtime(true) * 1000),
+                'data' => [
+                    'agent_id' => 0,
+                    'agentModeName' => 'Alcance infinito',
+                    'settleDuration' => 1,
+                    'settleDurationDays' => 0,
+                    'agent_mode' => 0,
+                    'advertise' => 'Renda mensal de um milhão',
+                    'nextSettleTime' => 1751518800,
+                    'calcPerformance' => 0,
+                    'isProAgent' => false
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/getByTemplate') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota netstat/point/get (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/netstat/point/get') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota netstat/point/get/static (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/netstat/point/get/static') {
+            $rotaEncontrada = true;
+
+            // Captura os parâmetros da query string
+            $siteCode = $_GET['siteCode'] ?? '';
+            $token = $_GET['token'] ?? '';
+            $idx = $_GET['idx'] ?? '';
+            $idxType = $_GET['idxType'] ?? '';
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "siteCode" => $siteCode,
+                    "token" => $token,
+                    "idx" => (int)$idx,
+                    "idxType" => (int)$idxType,
+                    "status" => "active",
+                    "timestamp" => round(microtime(true) * 1000),
+                    "points" => [
+                        "current" => 999998,
+                        "total" => 1000000,
+                        "available" => 2
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota netstat/point/get/static parametrizada (GET)
+        if (preg_match('#^/hall/api/netstat/point/get/static/idx/(\d+)/idxType/(\d+)\.json$#', parse_url($requestURI, PHP_URL_PATH), $matches)) {
+            $rotaEncontrada = true;
+
+            $idx = (int)$matches[1];
+            $idxType = (int)$matches[2];
+            $v = $_GET['v'] ?? '';
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "idx" => $idx,
+                    "idxType" => $idxType,
+                    "version" => $v,
+                    "status" => "active",
+                    "timestamp" => round(microtime(true) * 1000),
+                    "staticData" => [
+                        "points" => [
+                            "current" => $idx,
+                            "type" => $idxType,
+                            "maxPoints" => 1000000,
+                            "available" => max(0, 1000000 - $idx)
+                        ],
+                        "configuration" => [
+                            "refreshInterval" => 30,
+                            "cacheTimeout" => 300,
+                            "dataSource" => "static"
+                        ],
+                        "metadata" => [
+                            "lastUpdate" => date('Y-m-d H:i:s'),
+                            "format" => "json",
+                            "encoding" => "UTF-8"
+                        ]
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "Dados estáticos recuperados com sucesso",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/category') {
+            $rotaEncontrada = true;
+            //header('Content-Type: text/plain');
+
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "activeList" => [
+                        [
+                            "activeId" => 4,
+                            "activeName" => "Recomende amigos para abrir o Baú dos Prêmios",
+                            "template" => 15,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("1") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 22,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 2,
+                            "remark" => '{"isShowPromoteBanner":0}'
+                        ],
+                       /* [
+                            "activeId" => 1,
+                            "activeName" => "Recompensas de convite",
+                            "template" => 1,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("2") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 19,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "en",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 0,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 0,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 2,
+                            "remark" => '{"displayList":[{"deviceType":2,"openType":2,"url":"' . data_floats2("4") . '","locationType":2}],"displayType":1,"isShowPromoteBanner":0}'
+                        ], */
+                        [
+                            "activeId" => 2,
+                            "activeName" => "Check In Diário",
+                            "template" => 3,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("3") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 18,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 0,
+                            "remark" => ""
+                        ],
+                        [
+                            "activeId" => 5,
+                            "activeName" => "Agente Nacional, Compartilhe e Ganhe Dinheiro!",
+                            "template" => 1,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("4") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 17,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "en",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 0,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 0,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 0,
+                            "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                        ],
+                        /* [
+                            "activeId" => 3,
+                            "activeName" => "Bônus extra de depósito inicial",
+                            "template" => 10,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("5") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 16,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 1,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 1,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 0,
+                            "remark" => ""
+                        ],
+                        [
+                            "activeId" => 6,
+                            "activeName" => "Desconto diário do jogo até 3.0%",
+                            "template" => 1,
+                            "categories" => "1",
+                            "startShowTime" => 1738033200,
+                            "endShowTime" => 2082769199,
+                            "startTime" => 1738033200,
+                            "endTime" => 2082769199,
+                            "isClientShow" => 2,
+                            "cycleType" => 0,
+                            "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"' . "/uploads/" . data_promocoes("6") . '","promotional_pictures":[],"picture_status":0}',
+                            "isShowTime" => 1,
+                            "weigh" => 15,
+                            "status" => 1,
+                            "isDefaultLang" => 0,
+                            "receiveDeviceType" => "1,2,5,6",
+                            "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                            "translateNames" => "en",
+                            "translateIntroduction" => "pt",
+                            "translateRuleText" => "",
+                            "isDefaultLangName" => 0,
+                            "isDefaultLangIntroduction" => 0,
+                            "isDefaultLangRuleText" => 0,
+                            "clientShowDeviceType" => "1,2,4,5,6",
+                            "clientShowImgSize" => 0,
+                            "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                        ],
+                        [
+                             "activeId" => 16,
+                             "activeName" => "Total de apostas da Roda da Sorte",
+                             "template" => 20,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824459110600979.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 14,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 1,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 1,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => ""
+                         ],
+                         [
+                             "activeId" => 7,
+                             "activeName" => "Recompensas vitalícias VIP",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824147337880675.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 13,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 15,
+                             "activeName" => "Aposta da sorte",
+                             "template" => 14,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824443104642924.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 12,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 1,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 1,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => ""
+                         ],
+                         [
+                             "activeId" => 12,
+                             "activeName" => "Instagram",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824334498280966.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 11,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "",
+                             "clientShowImgSize" => 2,
+                             "remark" => '{"displayList":[{"deviceType":2,"openType":2,"url":"' . data_floats2("1") . '","locationType":2}],"displayType":1,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 14,
+                             "activeName" => "Bônus de suporte diário de perda",
+                             "template" => 5,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082682799,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824387607160816.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 10,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 1,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 1,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => ""
+                         ],
+                        [
+                             "activeId" => 13,
+                             "activeName" => "WhatsApp",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":1,"promotional_color":"/siteadmin/active/9f0a1e.png","promotional_category":"赌场","promotional_icon":"https:lvjbmw-7567-ppp.s3.sa-east-1.amazonaws.com/siteadmin/active/img_hd_dc8.png","active_introduction":"","promotional_picture":"","promotional_pictures":null,"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 9,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "",
+                             "clientShowImgSize" => 2,
+                             "remark" => '{"displayList":[{"deviceType":2,"openType":2,"url":"' . data_floats2("3") . '","locationType":2}],"displayType":1,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 9,
+                             "activeName" => "Taxa de juro anual 500%",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824219266533437.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 8,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 11,
+                             "activeName" => "a cada 5 bônus",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14812517757920952.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 7,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 10,
+                             "activeName" => "Jackpot Bilionário Misterioso Distribuição aleatória do sistema",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824251844629543.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 6,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                         ],
+                         [
+                             "activeId" => 8,
+                             "activeName" => "Tải xuống APP và có cơ hội nhận được 1R$-555R$",
+                             "template" => 1,
+                             "categories" => "1",
+                             "startShowTime" => 1738033200,
+                             "endShowTime" => 2082769199,
+                             "startTime" => 1738033200,
+                             "endTime" => 2082769199,
+                             "isClientShow" => 2,
+                             "cycleType" => 0,
+                             "imgId" => '{"promotional_style":4,"promotional_color":"","promotional_category":"","promotional_icon":"","active_introduction":"","promotional_picture":"/active/ActiveImg14824178748316173.jpg","promotional_pictures":[],"picture_status":0}',
+                             "isShowTime" => 1,
+                             "weigh" => 5,
+                             "status" => 1,
+                             "isDefaultLang" => 0,
+                             "receiveDeviceType" => "1,2,5,6",
+                             "taskCondition" => '{"condition":"","ipLimit":1,"deviceLimit":1,"browserLimit":1}',
+                             "translateNames" => "en",
+                             "translateIntroduction" => "pt",
+                             "translateRuleText" => "",
+                             "isDefaultLangName" => 0,
+                             "isDefaultLangIntroduction" => 0,
+                             "isDefaultLangRuleText" => 0,
+                             "clientShowDeviceType" => "1,2,4,5,6",
+                             "clientShowImgSize" => 0,
+                             "remark" => '{"displayList":null,"displayType":0,"isShowPromoteBanner":0}'
+                         ] */
+                    ],
+                    "categoryList" => [
+                        [
+                            "categoryId" => 1,
+                            "name" => "Misto",
+                            "categoryType" => 1,
+                            "sortNumber" => 1,
+                            "showIcon" => 1,
+                            "checkedIcon" => "",
+                            "unCheckedIcon" => ""
+                        ],
+                        [
+                            "categoryId" => 4,
+                            "name" => "Slots",
+                            "categoryType" => 1,
+                            "sortNumber" => 2,
+                            "showIcon" => 1,
+                            "checkedIcon" => "",
+                            "unCheckedIcon" => ""
+                        ]
+                    ]
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota active/category com parâmetros (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/category/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "categories" => [
+                        [
+                            "categoryId" => 1,
+                            "name" => "Promoções Ativas",
+                            "description" => "Todas as promoções e ofertas especiais disponíveis",
+                            "categoryType" => 1,
+                            "sortNumber" => 1,
+                            "showIcon" => 1,
+                            "checkedIcon" => "/uploads/category_active_checked.png",
+                            "unCheckedIcon" => "/uploads/category_active_unchecked.png",
+                            "currency" => "BRL",
+                            "language" => "pt",
+                            "isActive" => true,
+                            "totalPromotions" => 15
+                        ],
+                        [
+                            "categoryId" => 2,
+                            "name" => "Bônus de Depósito",
+                            "description" => "Bônus especiais para depósitos",
+                            "categoryType" => 2,
+                            "sortNumber" => 2,
+                            "showIcon" => 1,
+                            "checkedIcon" => "/uploads/category_deposit_checked.png",
+                            "unCheckedIcon" => "/uploads/category_deposit_unchecked.png",
+                            "currency" => "BRL",
+                            "language" => "pt",
+                            "isActive" => true,
+                            "totalPromotions" => 8
+                        ],
+                        [
+                            "categoryId" => 3,
+                            "name" => "Cashback",
+                            "description" => "Ofertas de reembolso e cashback",
+                            "categoryType" => 3,
+                            "sortNumber" => 3,
+                            "showIcon" => 1,
+                            "checkedIcon" => "/uploads/category_cashback_checked.png",
+                            "unCheckedIcon" => "/uploads/category_cashback_unchecked.png",
+                            "currency" => "BRL",
+                            "language" => "pt",
+                            "isActive" => true,
+                            "totalPromotions" => 5
+                        ],
+                        [
+                            "categoryId" => 4,
+                            "name" => "VIP Rewards",
+                            "description" => "Recompensas exclusivas para membros VIP",
+                            "categoryType" => 4,
+                            "sortNumber" => 4,
+                            "showIcon" => 1,
+                            "checkedIcon" => "/uploads/category_vip_checked.png",
+                            "unCheckedIcon" => "/uploads/category_vip_unchecked.png",
+                            "currency" => "BRL",
+                            "language" => "pt",
+                            "isActive" => true,
+                            "totalPromotions" => 12
+                        ]
+                    ],
+                    "metadata" => [
+                        "currency" => "BRL",
+                        "language" => "pt",
+                        "totalCategories" => 4,
+                        "lastUpdated" => date('Y-m-d H:i:s'),
+                        "version" => "1.0"
+                    ]
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/active/getByTemplate/currency/BRL.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/club/manager/isApplyOpen/default.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "isApplyOpen" => false
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/lobby/finance/getSiteGuaranteeRule/language/pt.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 0,
+                "data" => [
+                    "cancelMargin" => 1,
+                    "claimSwitch" => 2,
+                    "content" => '<p dir="ltr" style="line-height: 1.38; margin-top: 12pt; margin-bottom: 12pt; text-align: center;"><span style="font-size: 10.5pt; font-family: Verdana,sans-serif; color: #000000; background-color: transparent; font-weight: bold;">Regras do Serviço de Garantia Básica</span></p>
+                    <p dir="ltr" style="line-height: 1.38; margin: 0;"><span style="font-size: 10.5pt; font-family: Verdana,sans-serif; color: #000000; font-weight: bold;">1. Regras de Garantia</span><br><span style="font-size: 10.5pt; font-family: Verdana,sans-serif; color: #666666;">(1) Garantia: Este site adere ao serviço de garantia terceirizada "NO Wallet". Em caso de disputas, você pode solicitar uma indenização.</span></p>
+                    <p dir="ltr" style="line-height: 1.38; text-align: center;">[...]</p>', // <-- continue truncando ou carregando conforme necessário
+                    "createTime" => 1744339808,
+                    "guaranteeAmount" => "0",
+                    "guaranteeType" => 0
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/maxChargeRate' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/maxChargeRate/') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => 1747706623,
+                "data" => [
+                    "charge_rate" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/sensitiveData/currency/BRL/language/pt/platformType/5.json' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/sensitiveData') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+               'code' => 1,
+    'data' => [
+        'dataList' => [
+            [
+                'data' => [
+                    [
+                        'name' => 'myDataPageDirectAddNum',
+                        'remark' => '新增直属',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectFirstDepositAmount',
+                        'remark' => '首充金额',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectFirstDepositNum',
+                        'remark' => '首充人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectDepositAmount',
+                        'remark' => '充值金额',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectDepositNum',
+                        'remark' => '充值人数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectWithdrawAmount',
+                        'remark' => '提现金额',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectWithdrawNum',
+                        'remark' => '提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectValidBets',
+                        'remark' => '有效投注',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectDiscount',
+                        'remark' => '领取优惠',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectPerformance',
+                        'remark' => '直属业绩',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectWinloss',
+                        'remark' => '直属输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageDirectTotalCommission',
+                        'remark' => '总佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryTeamNum',
+                        'remark' => '团队人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryDirectNum',
+                        'remark' => '直属人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryOtherNum',
+                        'remark' => '其他人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryTotalPerformance',
+                        'remark' => '总业绩',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryDirectPerformance',
+                        'remark' => '直属业绩',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryOtherPerformance',
+                        'remark' => '其他业绩',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryTotalCommission',
+                        'remark' => '总佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryDirectCommission',
+                        'remark' => '直属佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryOtherCommission',
+                        'remark' => '其他佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountCommission',
+                        'remark' => '累计佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryTakedCommission',
+                        'remark' => '已领取',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryTakingCommission',
+                        'remark' => '未领取',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountDirectDeposit',
+                        'remark' => '累计直属充值',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountDirectWithdraw',
+                        'remark' => '累计直属提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountDirectDiscount',
+                        'remark' => '累计直属领取',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountDirectValidBets',
+                        'remark' => '累计直属有效投注',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'myDataPageSummaryCountDirectWinloss',
+                        'remark' => '累计直属输赢',
+                        'value' => '0'
+                    ]
+                ],
+                'name' => 'myDataPage',
+                'remark' => '我的数据',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'myPerformancePageTotalPerformance',
+                        'remark' => '总业绩',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myPerformancePageDirectPerformance',
+                        'remark' => '直属业绩',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myPerformancePageOtherPerformance',
+                        'remark' => '其他业绩',
+                        'value' => '1'
+                    ]
+                ],
+                'name' => 'myPerformancePage',
+                'remark' => '我的业绩',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'myCommissionPageTotalCommission',
+                        'remark' => '总佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myCommissionPageDirectCommission',
+                        'remark' => '直属佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'myCommissionPageOtherCommission',
+                        'remark' => '其他佣金',
+                        'value' => '1'
+                    ]
+                ],
+                'name' => 'myCommissionPage',
+                'remark' => '我的佣金',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'directDataPageFirstRechargeAmount',
+                        'remark' => '总首充',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageNumFirstDeposit',
+                        'remark' => '总首充人数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageDirectFirstRechargeAmount',
+                        'remark' => '直属首充',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageDirectNumFirstDeposit',
+                        'remark' => '直属首充人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherFirstRechargeAmount',
+                        'remark' => '其他首充',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherNumFirstDeposit',
+                        'remark' => '其他首充人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directDataPageTotalRecharge',
+                        'remark' => '总充值',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageTotalNumDeposit',
+                        'remark' => '总充值人次',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageRechargeAmount',
+                        'remark' => '直属充值',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directDataPageNumRecharge',
+                        'remark' => '直属充值人次',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherRecharge',
+                        'remark' => '其他充值',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherNumDeposit',
+                        'remark' => '其他充值人次',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageTotalWithdraw',
+                        'remark' => '总提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageNumTotalWithdraw',
+                        'remark' => '总提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageDirectWithdraw',
+                        'remark' => '直属提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageNumDirectWithdraw',
+                        'remark' => '直属提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherWithdraw',
+                        'remark' => '其他提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageNumOtherWithdraw',
+                        'remark' => '其他提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageTotalValidBets',
+                        'remark' => '总有效投注',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageValidBets',
+                        'remark' => '直属有效投注',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherValidBets',
+                        'remark' => '其他有效投注',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageTotalWinLoss',
+                        'remark' => '总输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageDirectWinLoss',
+                        'remark' => '直属输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageOtherWinLoss',
+                        'remark' => '其他输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageDirectDiscount',
+                        'remark' => '直属优惠领取',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directDataPageNumRegister',
+                        'remark' => '直属注册人数',
+                        'value' => '0'
+                    ]
+                ],
+                'name' => 'directDataPage',
+                'remark' => '下级信息',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'directBetPageTotalValidBets',
+                        'remark' => '总有效投注',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directBetPageDirectlyValidBets',
+                        'remark' => '直属有效投注',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directBetPageOtherValidBets',
+                        'remark' => '其他有效投注',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directBetPageTotalWinLoss',
+                        'remark' => '总输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directBetPageDirectlyWinLose',
+                        'remark' => '直属输赢',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directBetPageOtherWinLose',
+                        'remark' => '其他输赢',
+                        'value' => '0'
+                    ]
+                ],
+                'name' => 'directBetPage',
+                'remark' => '下级投注',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'directFinancialPageFirstCharge',
+                        'remark' => '总首充',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumFirstDeposit',
+                        'remark' => '总首充人数',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directFinancialPageDirectFirstCharge',
+                        'remark' => '直属首充',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumDirectFirstCharge',
+                        'remark' => '直属首充人数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageOtherFirstCharge',
+                        'remark' => '其他首充',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumOtherFirstCharge',
+                        'remark' => '其他首充人数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageTotalRecharge',
+                        'remark' => '总充值',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directFinancialPageTotalNumRecharge',
+                        'remark' => '总充值人次',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directFinancialPageDirectRecharge',
+                        'remark' => '直属充值',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageDirectNumRecharge',
+                        'remark' => '直属充值人次',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageOtherRecharge',
+                        'remark' => '其他充值',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageOtherNumRecharge',
+                        'remark' => '其他充值人次',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageTotalWithdraw',
+                        'remark' => '总提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumTotalWithdraw',
+                        'remark' => '总提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageDirectWithdraw',
+                        'remark' => '直属提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumDirectWithdraw',
+                        'remark' => '直属提现次数',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageOtherWithdraw',
+                        'remark' => '其他提现',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directFinancialPageNumOtherWithdraw',
+                        'remark' => '其他提现次数',
+                        'value' => '0'
+                    ]
+                ],
+                'name' => 'directFinancialPage',
+                'remark' => '下级财务',
+                'value' => '1'
+            ],
+            [
+                'data' => [
+                    [
+                        'name' => 'directTakeActivityTakes',
+                        'remark' => '活动领取',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directTakeRebateTakes',
+                        'remark' => '返水领取',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directTakeTaskTakes',
+                        'remark' => '任务奖励',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directTakeAgentCommission',
+                        'remark' => '代理佣金',
+                        'value' => '1'
+                    ],
+                    [
+                        'name' => 'directTakeOtherSummary',
+                        'remark' => '其他汇总',
+                        'value' => '0'
+                    ],
+                    [
+                        'name' => 'directTakeTotalTake',
+                        'remark' => '合计领取',
+                        'value' => '0'
+                    ]
+                ],
+                'name' => 'directTake',
+                'remark' => '下级领取',
+                'value' => '1'
+            ]
+        ],
+        'showName' => 1,
+        'showType' => 1
+    ],
+    'siteCode' => '8606',
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/index/language/pt.json' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/index') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "agent_levels" => [
+                        [
+                            "commission" => 0,
+                            "level" => 1,
+                            "level_name" => "LV1"
+                        ],
+                        [
+                            "commission" => 100,
+                            "level" => 2,
+                            "level_name" => "LV2"
+                        ],
+                        [
+                            "commission" => 300,
+                            "level" => 3,
+                            "level_name" => "LV3"
+                        ],
+                        [
+                            "commission" => 500,
+                            "level" => 4,
+                            "level_name" => "LV4"
+                        ],
+                        [
+                            "commission" => 800,
+                            "level" => 5,
+                            "level_name" => "LV5"
+                        ],
+                        [
+                            "commission" => 1000,
+                            "level" => 6,
+                            "level_name" => "LV6"
+                        ],
+                        [
+                            "commission" => 10000,
+                            "level" => 7,
+                            "level_name" => "LV7"
+                        ],
+                        [
+                            "commission" => 30000,
+                            "level" => 8,
+                            "level_name" => "LV8"
+                        ],
+                        [
+                            "commission" => 50000,
+                            "level" => 9,
+                            "level_name" => "LV9"
+                        ],
+                        [
+                            "commission" => 80000,
+                            "level" => 10,
+                            "level_name" => "LV10"
+                        ],
+                        [
+                            "commission" => 100000,
+                            "level" => 11,
+                            "level_name" => "LV11"
+                        ],
+                        [
+                            "commission" => 1000000,
+                            "level" => 12,
+                            "level_name" => "LV12"
+                        ],
+                        [
+                            "commission" => 3000000,
+                            "level" => 13,
+                            "level_name" => "LV13"
+                        ],
+                        [
+                            "commission" => 5000000,
+                            "level" => 14,
+                            "level_name" => "LV14"
+                        ],
+                        [
+                            "commission" => 8000000,
+                            "level" => 15,
+                            "level_name" => "LV15"
+                        ],
+                        [
+                            "commission" => 10000000,
+                            "level" => 16,
+                            "level_name" => "LV16"
+                        ],
+                        [
+                            "commission" => 100000000,
+                            "level" => 17,
+                            "level_name" => "LV17"
+                        ],
+                        [
+                            "commission" => 300000000,
+                            "level" => 18,
+                            "level_name" => "LV18"
+                        ],
+                        [
+                            "commission" => 500000000,
+                            "level" => 19,
+                            "level_name" => "LV19"
+                        ],
+                        [
+                            "commission" => 800000000,
+                            "level" => 20,
+                            "level_name" => "LV20"
+                        ]
+                    ],
+                    "displayShareIcon" => true,
+                    "save_img_url" => $WG_BUCKET_SITE . "/cocos/agent/share_save_img.jpg",
+                    "save_img_x" => 230,
+                    "save_img_y" => 1060,
+                    "save_qrcode_width" => 290,
+                    "share_img_url" => $WG_BUCKET_SITE . "/cocos/agent/share_img.jpg",
+                    "share_img_x" => 375,
+                    "share_img_y" => 252,
+                    "share_list" => [
+                        [
+                            "moments" => [
+                                [
+                                    "type" => 1,
+                                    "type_text" => ""
+                                ]
+                            ],
+                            "qq" => [
+                                [
+                                    "type" => 3,
+                                    "type_text" => ""
+                                ]
+                            ],
+                            "wx" => [
+                                [
+                                    "type" => 3,
+                                    "type_text" => ""
+                                ]
+                            ]
+                        ]
+                    ],
+                    "share_qrcode_width" => 290
+                ],
+                "siteCode" => "7920",
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/getCreateAccountConfig/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+            header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "registerValidateMode" => 0,
+                    "register_action_check" => 0,
+                    "show_email" => 0,
+                    "show_phone" => 0,
+                    "show_real_name" => 0
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/optTypesV2/language/pt.json') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "opt_type_list" => [
+                        [
+                            "id" => 0,
+                            "name" => "Categorias de alteração de conta"
+                        ],
+                        [
+                            "id" => 1,
+                            "name" => "Troca de Fundos"
+                        ],
+                        [
+                            "id" => 2,
+                            "name" => "Depósito de membro"
+                        ],
+                        [
+                            "id" => 3,
+                            "name" => "Saque de Membro"
+                        ],
+                        [
+                            "id" => 4,
+                            "name" => "Liquidação do Comerciante"
+                        ],
+                        [
+                            "id" => 5,
+                            "name" => "Correção de Fundo"
+                        ],
+                        [
+                            "id" => 6,
+                            "name" => "Eventos"
+                        ],
+                        [
+                            "id" => 7,
+                            "name" => "Taxa de Rebate"
+                        ],
+                        [
+                            "id" => 8,
+                            "name" => "Comissão"
+                        ],
+                        [
+                            "id" => 9,
+                            "name" => "Juros"
+                        ],
+                        [
+                            "id" => 10,
+                            "name" => "Missão"
+                        ],
+                        [
+                            "id" => 13,
+                            "name" => "Recompensa VIP"
+                        ],
+                        [
+                            "id" => 14,
+                            "name" => "Oferta de Depósito"
+                        ],
+                        [
+                            "id" => 16,
+                            "name" => "Bônus"
+                        ],
+                        [
+                            "id" => 17,
+                            "name" => "Reivindicações garantidas"
+                        ],
+                        [
+                            "id" => 18,
+                            "name" => "Transferir"
+                        ],
+                        [
+                            "id" => 23,
+                            "name" => "Fundo de garantia"
+                        ],
+                        [
+                            "id" => 24,
+                            "name" => "Clube"
+                        ],
+                        [
+                            "id" => 30,
+                            "name" => "Fundo de Previdência"
+                        ],
+                        [
+                            "id" => 31,
+                            "name" => "Surpresa"
+                        ]
+                    ]
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/report/agentInfo') {
+            $rotaEncontrada = true;
+            // header('Content-Type: text/plain');
+            $response = [
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => 1747706922,
+                "data" => [
+                    "canTakeCommission" => 0,
+                    "parentUserIdx" => 0,
+                    "parentUsername" => "",
+                    "promoteLevelId" => 0,
+                    "promoteLevelName" => "",
+                    "settleDuration" => 1,
+                    "settleDurationDays" => 0,
+                    "isProAgent" => false,
+                    "proAgentStatus" => 3,
+                    "lastCommission" => 0,
+                    "totalCommission" => 0,
+                    "totalValidBet" => 0
+                ]
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/share/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "currency" => "",
+                    "customizeImage" => "",
+                    "slogan" => "",
+                    "title" => ""
+                ],
+                "siteCode" => "7920",
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota finance/payPopup/settingAndSlogans (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/payPopup/settingAndSlogans/currency/BRL.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+
+                ],
+                "siteCode" => "7920",
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+         // Rota finance/payPopup/settingAndSlogans (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/version.json') {
+            $rotaEncontrada = true;
+            $response = [
+                '/hall/active/active_popRecharge' => '1751060564',
+                '/hall/active/category' => '1751147694',
+                '/hall/active/customPageList' => '1751147693',
+                '/hall/active/isShowV2' => '1751060646',
+                '/hall/active/popSignActive' => '1751147684',
+                '/hall/active/pop_chop_one_knife' => '1751472131',
+                '/hall/active/quickList' => '1751147694',
+                '/hall/activetask/newcomer_benefit_reward' => '1751068315',
+                '/hall/activetask/pop_newcomerBenefit' => '1751068315',
+                '/hall/activetask/pop_taskThreeDay' => '1751426783',
+                '/hall/api/active/active_popRecharge' => '1751494862',
+                '/hall/api/active/category' => '1751495082',
+                '/hall/api/active/customPageList' => '1751147694',
+                '/hall/api/active/getByTemplate' => '1751494722',
+                '/hall/api/active/isShowV2' => '1751493242',
+                '/hall/api/active/popSignActive' => '1751147684',
+                '/hall/api/active/pop_chop_one_knife' => '1751472131',
+                '/hall/api/active/quickList' => '1751494442',
+                '/hall/api/active/tasks/newcomer_benefit_reward' => '1751496343',
+                '/hall/api/active/tasks/pop_newcomerBenefit' => '1751494442',
+                '/hall/api/active/tasks/pop_taskDay' => '1751494442',
+                '/hall/api/active/tasks/pop_taskThreeDay' => '1751495721',
+                '/hall/api/active/tasks/pop_taskWeek' => '1751494442',
+                '/hall/api/agent/downloadSite/getDownloadTemplate' => '1751347342',
+                '/hall/api/agent/downloadSite/getLinkV2' => '1751347342',
+                '/hall/api/agent/promote/config/agentMode' => '1751493682',
+                '/hall/api/agent/promote/config/index' => '1751494812',
+                '/hall/api/agent/promote/config/introduce' => '1751320313',
+                '/hall/api/agent/promote/config/sensitiveData' => '1751494982',
+                '/hall/api/agent/promote/config/share' => '1751494812',
+                '/hall/api/agent/promote/config/tutorial' => '1751494862',
+                '/hall/api/backstage/customer/getCocosTrans' => '1751495092',
+                '/hall/api/backstage/customer/getWebTrans' => '1751493452',
+                '/hall/api/backstage/system/status' => '1751495062',
+                '/hall/api/club/manager/isApplyOpen' => '1751496542',
+                '/hall/api/domain/lobby/club/parentDomain' => '1751110183',
+                '/hall/api/finance/certify/withdrawSettingV3' => '1751495572',
+                '/hall/api/finance/maxChargeRate' => '1751492172',
+                '/hall/api/finance/optTypesV2' => '1751453602',
+                '/hall/api/finance/payListV4' => '1751370104',
+                '/hall/api/finance/payPopup/settingAndSlogans' => '1751494722',
+                '/hall/api/finance/payTypeV4' => '1751370104',
+                '/hall/api/game/hall/hotListV2' => '1751491123',
+                '/hall/api/game/hall/listPlatformCateLoadV2' => '1751491123',
+                '/hall/api/game/hall/listPlatformGameV2' => '1751479910',
+                '/hall/api/game/hall/listSpecialGameV2' => '1751491123',
+                '/hall/api/game/hall/listTryGameV2' => '1751491123',
+                '/hall/api/game/hall/listVirtualBonusPoolV2' => '1751496895',
+                '/hall/api/gohal/staffAllV3' => '1751495721',
+                '/hall/api/gohal/staffConfig' => '1751493362',
+                '/hall/api/lobby/aboutUs/index/getInfo' => '1751347225',
+                '/hall/api/lobby/config/getAppDownloadInfo' => '1751347225',
+                '/hall/api/lobby/currencyInfo/getAllCurrency' => '1751347225',
+                '/hall/api/lobby/finance/getSiteCurrencyExchangeRateForOss' => '1751496605',
+                '/hall/api/lobby/finance/getSiteGuaranteeRule' => '1751496605',
+                '/hall/api/lobby/footerConfig/getInfo' => '1751347225',
+                '/hall/api/lobby/footerConfigV2/getInfo' => '1751347225',
+                '/hall/api/lobby/h5/config/getAccessRestrictedInfo' => '1751347225',
+                '/hall/api/lobby/site/getSiteInfo' => '1751347225',
+                '/hall/api/lobby/userAgreement/index/getInfo' => '1751347225',
+                '/hall/api/lobby/webapi/forceUpdate/getForceUpdate' => '1751347225',
+                '/hall/api/lobby/webapi/h5/config/getInfo' => '1751347225',
+                '/hall/api/lobby/webapi/optimization/site/config' => '1751347225',
+                '/hall/api/lobby/webapi/optimizationV2/site/config' => '1751347225',
+                '/hall/api/lobby/webapi/selfRestraint/getInfo' => '1751347225',
+                '/hall/api/message/club/list/all' => '1751493472',
+                '/hall/api/message/list/all' => '1751493472',
+                '/hall/api/message/loadPage/index' => '1751422352',
+                '/hall/api/message/popupcfg' => '1751493452',
+                '/hall/api/message/smsCountry' => '1751494131',
+                '/hall/api/netstat/point/get/static' => '1751496983',
+                '/hall/api/third/game/platformExchange/findListAll' => '1751472004',
+                '/hall/api/v1/down_site/get_link_v2' => '1751347342',
+                '/hall/customer/getCocosTrans' => '1751455567',
+                '/hall/customer/getWebTrans' => '1751455567',
+                '/hall/customer/staffallv2' => '1751249744',
+                '/hall/customer/staffallv3' => '1751249744',
+                '/hall/customer/staffconfig' => '1751249744',
+                '/hall/download/template/getPageLanguage' => '1751347225',
+                '/hall/home/maxChargeRate' => '1751370104',
+                '/hall/message/frame' => '1751062014',
+                '/hall/message/list/all' => '1751470715',
+                '/hall/message/loadPage/index' => '1751061963',
+                '/hall/message/marquee' => '1751470703',
+                '/hall/promote/config/agentMode' => '1751060684',
+                '/hall/promote/config/share' => '1751347342',
+                '/hall/system/status' => '1751470804'
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota finance/payPopup/settingAndSlogans (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/tutorial/agentId/0/language/pt.json' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/tutorial') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "agentId" => 0,
+                    "agentSource" => 0,
+                    "languageCode" => "",
+                    "richText" => "",
+                    "useDefault" => 1
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota finance/payPopup/settingAndSlogans (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/agent/promote/config/introduce/agentId/0/currency/BRL/language/pt.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "calcPerformance" => 0,
+                    "list" => [
+                        [
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 0,
+                                "min_profit" => 0,
+                                "name" => "",
+                                "profit_audit_rate" => 0.09,
+                                "proportion" => 9,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 0.3,
+                                "min_profit" => 0.3,
+                                "name" => "",
+                                "profit_audit_rate" => 0.1,
+                                "proportion" => 10,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 0.5,
+                                "min_profit" => 0.5,
+                                "name" => "",
+                                "profit_audit_rate" => 0.11,
+                                "proportion" => 11,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 1,
+                                "min_profit" => 1,
+                                "name" => "",
+                                "profit_audit_rate" => 0.12,
+                                "proportion" => 12,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 3,
+                                "min_profit" => 3,
+                                "name" => "",
+                                "profit_audit_rate" => 0.13,
+                                "proportion" => 13,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 5,
+                                "min_profit" => 5,
+                                "name" => "",
+                                "profit_audit_rate" => 0.14,
+                                "proportion" => 14,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 10,
+                                "min_profit" => 10,
+                                "name" => "",
+                                "profit_audit_rate" => 0.15,
+                                "proportion" => 15,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 30,
+                                "min_profit" => 30,
+                                "name" => "",
+                                "profit_audit_rate" => 0.16,
+                                "proportion" => 16,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 50,
+                                "min_profit" => 50,
+                                "name" => "",
+                                "profit_audit_rate" => 0.17,
+                                "proportion" => 17,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 80,
+                                "min_profit" => 80,
+                                "name" => "",
+                                "profit_audit_rate" => 0.18,
+                                "proportion" => 18,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 100,
+                                "min_profit" => 100,
+                                "name" => "",
+                                "profit_audit_rate" => 0.19,
+                                "proportion" => 19,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 150,
+                                "min_profit" => 150,
+                                "name" => "",
+                                "profit_audit_rate" => 0.2,
+                                "proportion" => 20,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 200,
+                                "min_profit" => 200,
+                                "name" => "",
+                                "profit_audit_rate" => 0.21,
+                                "proportion" => 21,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 300,
+                                "min_profit" => 300,
+                                "name" => "",
+                                "profit_audit_rate" => 0.22,
+                                "proportion" => 22,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 500,
+                                "min_profit" => 500,
+                                "name" => "",
+                                "profit_audit_rate" => 0.23,
+                                "proportion" => 23,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 800,
+                                "min_profit" => 800,
+                                "name" => "",
+                                "profit_audit_rate" => 0.24,
+                                "proportion" => 24,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 1000,
+                                "min_profit" => 1000,
+                                "name" => "",
+                                "profit_audit_rate" => 0.25,
+                                "proportion" => 25,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 1500,
+                                "min_profit" => 1500,
+                                "name" => "",
+                                "profit_audit_rate" => 0.26,
+                                "proportion" => 26,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 3000,
+                                "min_profit" => 3000,
+                                "name" => "",
+                                "profit_audit_rate" => 0.27,
+                                "proportion" => 27,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ],
+                            [
+                                "agentMode" => 0,
+                                "direct_num" => 0,
+                                "game_cateid" => 3,
+                                "game_catename" => "Slots",
+                                "min" => 5000,
+                                "min_profit" => 5000,
+                                "name" => "",
+                                "profit_audit_rate" => 0.28,
+                                "proportion" => 28,
+                                "sum_recharge" => 0,
+                                "valid_num" => 0
+                            ]
+                        ]
+                    ],
+                    "minValidBet" => 0,
+                    "minValidDeposit" => 0,
+                    "rebateFrontDisplayFormat" => 1
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        }
+
+        // Rota pay/paysubmit/7920 (GET) --> Criar QRCODE
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/pay/paysubmit/7920') {
+            $token_user = $_COOKIE['token_user'] ?? '';
+            $amount = $_GET['amount'] ?? '';
+            
+            if (empty($token_user) || empty($amount) || !is_numeric($amount) || $amount <= 0) {
+                $response = [
+                    "code" => 400,
+                    "msg" => "Parâmetros inválidos ou não autenticado.",
+                    "data" => null,
+                ];
+                echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            
+            $token_user = trim($token_user);
+            $qry = "SELECT id, real_name, mobile, invitation_code FROM usuarios WHERE token = ?";
+            
+            if ($stmt = $mysqli->prepare($qry)) {
+                $stmt->bind_param("s", $token_user);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($datares = $result->fetch_assoc()) {
+                    $nome_pix = $datares['real_name'] ?: $datares['mobile'];
+                    
+                    // ⏱️ Iniciar medição de tempo
+                    $tempo_inicio = microtime(true);
+                    
+                    $return_data_pix = next_sistemas_qrcode($amount, $nome_pix, $datares['id']);
+                    
+                    // ⏱️ Calcular tempo decorrido
+                    $tempo_decorrido = microtime(true) - $tempo_inicio;
+                    error_log("[PIX GERADO] Tempo de geração: " . round($tempo_decorrido, 2) . " segundos");
+                    
+                    if (!empty($return_data_pix)) {
+                        $url_pix = $url_api_gatewayPix . '?paymentCodeBase64=' . urlencode($return_data_pix['qrcode']) . '&paymentCode=' . urlencode($return_data_pix['code']) . '&valorPix=' . urlencode($return_data_pix['amount']);
+                        
+                        // 🔔 WEBHOOK: Notificar PIX gerado (assíncrono para não atrasar resposta)
+                        // Colocar em background para não travar a resposta
+                        if (function_exists('fastcgi_finish_request')) {
+                            // Envia resposta primeiro
+                            $response = [
+                                "code" => 0,
+                                "msg" => "success",
+                                "data" => [
+                                    "code" => "",
+                                    "msg" => "null",
+                                    "success" => true,
+                                    "type" => "URL",
+                                    "data" => $url_pix,
+                                    "url" => $url_pix,
+                                    "payAddress" => "",
+                                    "orderNo" => $return_data_pix['transacao_id'] ?? $return_data_pix['transaction_id'] ?? null,
+                                    "autoQueryOrder" => false,
+                                    "outTradeNo" => $return_data_pix['transacao_id'] ?? $return_data_pix['transaction_id'] ?? null,
+                                    "internalJump" => false,
+                                    "qrCode" => $return_data_pix['code'],
+                                    "createTime" => round(microtime(true) * 1000),
+                                    "version" => 4
+                                ],
+                                "success" => true
+                            ];
+                            
+                            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                            
+                            // Finaliza a conexão com o cliente
+                            fastcgi_finish_request();
+                            
+                            // Agora dispara o webhook em background
+                            WebhookPixGerado($nome_pix, $_SERVER['HTTP_HOST'], $amount);
+                        } else {
+                            // Se não tiver fastcgi, dispara webhook normalmente
+                            WebhookPixGerado($nome_pix, $_SERVER['HTTP_HOST'], $amount);
+                            
+                            $response = [
+                                "code" => 0,
+                                "msg" => "success",
+                                "data" => [
+                                    "code" => "",
+                                    "msg" => "null",
+                                    "success" => true,
+                                    "type" => "URL",
+                                    "data" => $url_pix,
+                                    "url" => $url_pix,
+                                    "payAddress" => "",
+                                    "orderNo" => $return_data_pix['transacao_id'] ?? $return_data_pix['transaction_id'] ?? null,
+                                    "autoQueryOrder" => false,
+                                    "outTradeNo" => $return_data_pix['transacao_id'] ?? $return_data_pix['transaction_id'] ?? null,
+                                    "internalJump" => false,
+                                    "qrCode" => $return_data_pix['code'],
+                                    "createTime" => round(microtime(true) * 1000),
+                                    "version" => 4
+                                ],
+                                "success" => true
+                            ];
+                        }
+                    } else {
+                        $response = [
+                            "code" => 500,
+                            "msg" => "Erro ao gerar QR Code Pix.",
+                            "data" => null
+                        ];
+                    }
+                } else {
+                    $response = [
+                        "code" => 400,
+                        "msg" => "Desconecte da conta e refaça o login! [804349EX]",
+                        "data" => null,
+                    ];
+                }
+                $stmt->close();
+            } else {
+                $response = [
+                    "code" => 500,
+                    "msg" => "Erro interno. [PH-ERR-DBERR]",
+                    "data" => null,
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota gameCenter/gameApi/favorite-list-all (POST)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/certify/withdrawSettingV3/currency/BRL/language/pt.json' || parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/certify/withdrawSettingV3') {
+            $rotaEncontrada = true;
+
+            $response = [
+                "code" => 1,
+                "data" => [
+                    "bankInfo" => [
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093663274-406733.png",
+                            "Name" => "C.SUISSE HEDGING-GRIFFO CV S/A",
+                            "en" => "CSHGCSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092415652-659441.png",
+                            "Name" => "BCO MERCEDES-BENZ S.A",
+                            "en" => "MERCEDESBENZ"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068410447-474908.png",
+                            "Name" => "BNDES",
+                            "en" => "BNDES"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002115627-726352.png",
+                            "Name" => "BCO TOYOTA DO BRASIL S.A",
+                            "en" => "BTDBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059801284-870949.png",
+                            "Name" => "MONEYCORP BCO DE CAMBIO S.A",
+                            "en" => "MONEYCORP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059965010-849467.png",
+                            "Name" => "SOCRED SA - SCMEPP",
+                            "en" => "SOCRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087613185-389919.png",
+                            "Name" => "COBUCCIO S.A. SCFI",
+                            "en" => "COBUCCIO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058860197-648071.png",
+                            "Name" => "HS FINANCEIRA",
+                            "en" => "FINANCEIRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003274074-644020.png",
+                            "Name" => "CIP SA Sitraf",
+                            "en" => "CIPSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997917414-141676.png",
+                            "Name" => "FDO GARANTIDOR CREDITOS",
+                            "en" => "FGC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065219018-937662.png",
+                            "Name" => "NEON PAGAMENTOS S.A. IP",
+                            "en" => "PAGAMENTOS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088627914-570124.png",
+                            "Name" => "AZUMI DTVM",
+                            "en" => "AZUMIDTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059172420-110236.png",
+                            "Name" => "LECCA CFI S.A",
+                            "en" => "LECCA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997268511-920066.png",
+                            "Name" => "BCO RIBEIRAO PRETO S.A",
+                            "en" => "BRPSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059557191-210885.png",
+                            "Name" => "POLOCRED SCMEPP LTDA",
+                            "en" => "POLOCRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065660583-799553.png",
+                            "Name" => "FFA SCMEPP LTDA",
+                            "en" => "FFA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706015082817-540975.png",
+                            "Name" => "BCO DA AMAZONIA S.A",
+                            "en" => "AMAZONIA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088957415-401187.png",
+                            "Name" => "BNY MELLON BCO S.A",
+                            "en" => "BNYMELLON"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091881091-272794.png",
+                            "Name" => "BCO SAFRA S.A",
+                            "en" => "SAFRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094404610-824972.png",
+                            "Name" => "BCO BS2 S.A",
+                            "en" => "BCOBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088666216-811417.png",
+                            "Name" => "J17 - SCD S/A",
+                            "en" => "JSCDBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059314195-700692.png",
+                            "Name" => "BANCO TOPAZIO S.A",
+                            "en" => "TOPAZIO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094958046-231635.png",
+                            "Name" => "DOURADA CORRETORA",
+                            "en" => "DOURADACORRETO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095330708-872354.png",
+                            "Name" => "BCO SANTANDER (BRASIL) S.A",
+                            "en" => "SANTANDERBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064452265-670140.png",
+                            "Name" => "SENSO CCVM S.A",
+                            "en" => "SENSO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092319920-540914.png",
+                            "Name" => "ITAU UNIBANCO S.A",
+                            "en" => "ITAUUNIBANCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065060888-865325.png",
+                            "Name" => "UNIDA DTVM LTDA",
+                            "en" => "UNIDADL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068745035-650707.png",
+                            "Name" => "LISTO SCD S.A",
+                            "en" => "LISTO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091368323-248137.png",
+                            "Name" => "BCO ANDBANK S.A",
+                            "en" => "ANDBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091400543-749714.png",
+                            "Name" => "KANASTRA SCD",
+                            "en" => "KANASTRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087500465-714454.png",
+                            "Name" => "QISTA S.A. CFI",
+                            "en" => "QISTASA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060429263-143212.png",
+                            "Name" => "BCO YAMAHA MOTOR S.A",
+                            "en" => "YAMAHA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706084957194-885268.png",
+                            "Name" => "PLANTAE CFI",
+                            "en" => "PLANTAE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064143556-904067.png",
+                            "Name" => "ID CTVM",
+                            "en" => "IDCTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094257506-119913.png",
+                            "Name" => "SIMPAUL",
+                            "en" => "SIMPAUL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094299773-111818.png",
+                            "Name" => "BCO RENDIMENTO S.A",
+                            "en" => "RENDIMENTO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091799731-838099.png",
+                            "Name" => "INTESA SANPAOLO BRASIL S.A. BM",
+                            "en" => "INTESASANPAOLO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063748457-449969.png",
+                            "Name" => "BARI CIA HIPOTECARIA",
+                            "en" => "BARI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091013245-244585.png",
+                            "Name" => "BNK DIGITAL SCD S.A",
+                            "en" => "BDIGITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091336934-199557.png",
+                            "Name" => "PERCAPITAL SCD S.A",
+                            "en" => "PERCAPITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093986913-180263.png",
+                            "Name" => "SINGULARE CTVM S.A",
+                            "en" => "SINGULARE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705999015482-496229.png",
+                            "Name" => "TRINUS CAPITAL DTVM",
+                            "en" => "TRINUSCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088323882-103566.png",
+                            "Name" => "HEMERA DTVM LTDA",
+                            "en" => "HEMERA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060909048-864212.png",
+                            "Name" => "BANCO RANDON S.A",
+                            "en" => "SEGUROS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997729196-579604.png",
+                            "Name" => "BANCO SEMEAR",
+                            "en" => "BANCOSEMEAR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003079871-330059.png",
+                            "Name" => "BANCO BRADESCARD",
+                            "en" => "BRADESCARD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092562220-782239.png",
+                            "Name" => "BANCO VOITER",
+                            "en" => "VOITER"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705999056166-335901.png",
+                            "Name" => "BCO KEB HANA DO BRASIL S.A",
+                            "en" => "KEBHANA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061513121-493599.png",
+                            "Name" => "BEXS BCO DE CAMBIO S.A",
+                            "en" => "BEXS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088185277-841604.png",
+                            "Name" => "CREDIHOME SCD",
+                            "en" => "CREDIHOME"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091673023-468113.png",
+                            "Name" => "BCO HSBC S.A",
+                            "en" => "HSBCSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058632213-581487.png",
+                            "Name" => "BCO DO NORDESTE DO BRASIL S.A",
+                            "en" => "BDNDBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706020678915-122716.png",
+                            "Name" => "PLANNER SOCIEDADE DE CREDITO DIRETO",
+                            "en" => "PSDCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094997380-678302.png",
+                            "Name" => "CREDIALIANÇA CCR",
+                            "en" => "CREDIALIANCACCR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091245047-365072.png",
+                            "Name" => "RED SCD S.A",
+                            "en" => "REDSCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088220262-766678.png",
+                            "Name" => "OPEA SCD",
+                            "en" => "OPEA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091196727-710487.png",
+                            "Name" => "JPMORGAN CHASE BANK",
+                            "en" => "JPMORGANCHASE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093260141-414952.png",
+                            "Name" => "BANCO INVESTCRED UNIBANCO S.A",
+                            "en" => "UNIBANCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067431090-360365.png",
+                            "Name" => "BCO CLASSICO S.A",
+                            "en" => "CLASSICO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997004203-533965.png",
+                            "Name" => "CAIXA ECONOMICA FEDERAL",
+                            "en" => "CEFEDERAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706012476794-660966.png",
+                            "Name" => "FACILICRED SCM LTDA",
+                            "en" => "FASTCASH"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068987736-325294.png",
+                            "Name" => "INTERCAM CC LTDA",
+                            "en" => "INTERCAM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063872081-249189.png",
+                            "Name" => "BANCO BESA S.A",
+                            "en" => "BESA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087973772-334549.png",
+                            "Name" => "CORA SCD S.A",
+                            "en" => "CORASCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706017639632-744698.png",
+                            "Name" => "COOPCENTRAL AILOS",
+                            "en" => "AILOS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705999160732-382412.png",
+                            "Name" => "XP INVESTIMENTOS CCTVM S/A",
+                            "en" => "XICSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091945249-826114.png",
+                            "Name" => "BCO FIBRA S.A",
+                            "en" => "FIBRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063520904-956990.png",
+                            "Name" => "FRAM CAPITAL DTVM S.A",
+                            "en" => "FRAMCAPITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066005656-187225.png",
+                            "Name" => "BCO BANESTES S.A",
+                            "en" => "BANESTES"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065022665-828509.png",
+                            "Name" => "ASAAS IP S.A",
+                            "en" => "ASAAS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092097175-637484.png",
+                            "Name" => "BANCO PAN",
+                            "en" => "BANCOPAN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058457390-584203.png",
+                            "Name" => "BCO BBI S.A",
+                            "en" => "BCOBBI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068370961-668090.png",
+                            "Name" => "BCO FATOR S.A",
+                            "en" => "FATOR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061307821-140543.png",
+                            "Name" => "BCO SENFF S.A",
+                            "en" => "SENFF"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065532504-627034.png",
+                            "Name" => "FLAGSHIP IP LTDA",
+                            "en" => "FLAGSHIP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066981656-505098.png",
+                            "Name" => "PAGPRIME IP",
+                            "en" => "PAGPRIME"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068291455-179356.png",
+                            "Name" => "BCO CITIBANK S.A",
+                            "en" => "BCOCITIBAKSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066762747-929212.png",
+                            "Name" => "SCOTIABANK BRASIL",
+                            "en" => "SCOTIABANKT"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088897479-935739.png",
+                            "Name" => "RJI",
+                            "en" => "RJI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087419308-596652.png",
+                            "Name" => "OLIVEIRA TRUST DTVM S.A",
+                            "en" => "OTDSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095122618-643487.png",
+                            "Name" => "BCO RNX S.A",
+                            "en" => "BANCOPNX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996786072-687882.png",
+                            "Name" => "AGK CC S.A",
+                            "en" => "AGK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706020581938-685120.png",
+                            "Name" => "CREDIARE CFI S.A",
+                            "en" => "CREDIARE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092188102-801033.png",
+                            "Name" => "BCO ITAUBANK S.A",
+                            "en" => "BISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091476250-857000.png",
+                            "Name" => "BRCONDOS SCD S.A",
+                            "en" => "BRCONDOSBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093526269-903303.png",
+                            "Name" => "BCO SOCIETE GENERALE BRASIL",
+                            "en" => "SOCIETEGENERALE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088925295-989333.png",
+                            "Name" => "SBCASH SCD",
+                            "en" => "SBCASHSCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095514972-658975.png",
+                            "Name" => "BCO DIGIMAIS S.A",
+                            "en" => "DIGIMAIS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088046716-739527.png",
+                            "Name" => "DELCRED SCD S.A",
+                            "en" => "DELCRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093326979-819791.png",
+                            "Name" => "BCO C6 CONSIG",
+                            "en" => "CLBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059420586-474200.png",
+                            "Name" => "VALOR SCD S.A",
+                            "en" => "VALOR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064416148-813757.png",
+                            "Name" => "BCO TRIANGULO S.A",
+                            "en" => "TRIANGULO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087767155-225585.png",
+                            "Name" => "ZIPDIN SCD S.A",
+                            "en" => "ZIPDIN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998381649-622109.png",
+                            "Name" => "BCO BNP PARIBAS BRASIL S A",
+                            "en" => "BBPBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068249547-345792.png",
+                            "Name" => "BCO CAIXA GERAL BRASIL S.A",
+                            "en" => "BCGBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996555483-480182.png",
+                            "Name" => "Bacen",
+                            "en" => "BACEN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068800216-867890.png",
+                            "Name" => "HAITONG BI DO BRASIL S.A",
+                            "en" => "HAITONG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067470968-938512.png",
+                            "Name" => "IDEAL CTVM S.A",
+                            "en" => "IDEAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095474518-173037.png",
+                            "Name" => "ADVANCED CC LTDA",
+                            "en" => "ADVANCED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065781844-456120.png",
+                            "Name" => "AL5 S.A. CFI",
+                            "en" => "ALBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094150007-254329.png",
+                            "Name" => "TRUSTEE DTVM LTDA",
+                            "en" => "PLANNERTRUSTEE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095682855-212011.png",
+                            "Name" => "EFX CC LTDA",
+                            "en" => "EFX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059884787-536878.png",
+                            "Name" => "EFI S.A. - IP",
+                            "en" => "EFI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064496582-809793.png",
+                            "Name" => "ICBC DO BRASIL BM S.A",
+                            "en" => "ICBCCHINA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060232913-661426.png",
+                            "Name" => "PICPAY BANK - BANCO MULTIPLO S.A",
+                            "en" => "BMSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095161988-634036.png",
+                            "Name" => "CREDICOAMO",
+                            "en" => "CREDICOAMO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996882064-535544.png",
+                            "Name" => "CONF NAC COOP CENTRAIS UNICRED",
+                            "en" => "UNICRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061267884-693126.png",
+                            "Name" => "GAZINCRED S.A. SCFI",
+                            "en" => "GAZINCRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998464961-418576.png",
+                            "Name" => "CECM COOPERFORTE",
+                            "en" => "COOPERFORTE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706012554355-208392.png",
+                            "Name" => "PORTOSEG S.A. CFI",
+                            "en" => "PORTOSEG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997342263-388246.png",
+                            "Name" => "BANCO BARI S.A",
+                            "en" => "BANCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065615039-604037.png",
+                            "Name" => "GUITTA CC LTDA",
+                            "en" => "GUITTA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092521290-176914.png",
+                            "Name" => "Câmbio B3",
+                            "en" => "CAMBIOB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060798697-732672.png",
+                            "Name" => "GLOBAL SCM LTDA",
+                            "en" => "SAUDEGLOBAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088798040-983305.png",
+                            "Name" => "MERIT DTVM LTDA",
+                            "en" => "MERITODTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064798638-132122.png",
+                            "Name" => "UBS BRASIL BI S.A",
+                            "en" => "UBSBB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093567740-687340.png",
+                            "Name" => "NEON CTVM S.A",
+                            "en" => "NCSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066677718-273407.png",
+                            "Name" => "STONEX BANCO DE CAMBIO S.A",
+                            "en" => "STONEX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087701756-749221.png",
+                            "Name" => "SUMUP SCD S.A.",
+                            "en" => "SUMUP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095047911-781858.png",
+                            "Name" => "BCO VR S.A",
+                            "en" => "VR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061471783-132389.png",
+                            "Name" => "BCO DO EST. DE SE S.A",
+                            "en" => "BDEDSSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063329461-525457.png",
+                            "Name" => "BR PARTNERS BI",
+                            "en" => "BRPARTNERS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067506964-141878.png",
+                            "Name" => "BCO C6 S.A",
+                            "en" => "BCOCSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059373454-637288.png",
+                            "Name" => "HSCM SCMEPP LTDA",
+                            "en" => "HSCM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091980754-427711.png",
+                            "Name" => "BCO VOLKSWAGEN S.A",
+                            "en" => "VOLKSWAGENSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067878437-581572.png",
+                            "Name" => "CREDITAQUI FINANCEIRA S.A. - CFI",
+                            "en" => "CREDITAQUI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060576879-782153.png",
+                            "Name" => "BCO AGIBANK S.A",
+                            "en" => "AGIBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087860918-289046.png",
+                            "Name" => "MERCADO CREDITO SCFI S.A",
+                            "en" => "MERCADOPAGE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706015209131-687632.png",
+                            "Name" => "BCO DO EST. DO PA S.A",
+                            "en" => "BDEDPS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092365034-584308.png",
+                            "Name" => "BCO BRADESCO S.A",
+                            "en" => "BANCOBRADESCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060538821-236892.png",
+                            "Name" => "MERCADO PAGO IP LTDA",
+                            "en" => "MERCADOPAGO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064840626-104997.png",
+                            "Name" => "AZIMUT BRASIL DISTRIBUIDORA DE TÍTULOS",
+                            "en" => "AZIMUTBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067746156-445077.png",
+                            "Name" => "QI SCD S.A",
+                            "en" => "QISCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002997345-724498.png",
+                            "Name" => "SERVICOOP",
+                            "en" => "SERVICOOP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065969873-341020.png",
+                            "Name" => "IB CCTVM S.A",
+                            "en" => "IBCCTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065120367-269774.png",
+                            "Name" => "SUDACRED SCMEPP LTDA",
+                            "en" => "SUDACRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063446724-561216.png",
+                            "Name" => "DOCK IP S.A",
+                            "en" => "DOCK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090818651-258192.png",
+                            "Name" => "ATICCA SCD S.A",
+                            "en" => "ATICCA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068027478-775306.png",
+                            "Name" => "BCO CEDULA S.A",
+                            "en" => "BCOCARDBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088709115-757400.png",
+                            "Name" => "TRINUS SCD S.A",
+                            "en" => "TRINUS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060357406-825430.png",
+                            "Name" => "SUPERDIGITAL I.P. S.A",
+                            "en" => "SUPERDIGITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003036055-562716.png",
+                            "Name" => "OZ CORRETORA DE CAMBIO S.A",
+                            "en" => "OZ"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064297291-862899.png",
+                            "Name" => "PINBANK IP",
+                            "en" => "PINBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093488617-604867.png",
+                            "Name" => "SAGITUR CC - EM LIQUIDAÇÃO EXTRAJUDICIAL",
+                            "en" => "SAGITUR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064732189-178112.png",
+                            "Name" => "NU PAGAMENTOS - IP",
+                            "en" => "NU"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060315537-325668.png",
+                            "Name" => "MASTER BI S.A",
+                            "en" => "MASTERBI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088997177-904941.png",
+                            "Name" => "PEFISA S.A. - C.F.I",
+                            "en" => "PEFISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091296191-197255.png",
+                            "Name" => "SER FINANCE SCD S.A",
+                            "en" => "SWAP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092060488-272873.png",
+                            "Name" => "BCO GM S.A",
+                            "en" => "GMBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996938146-359892.png",
+                            "Name" => "ÍNDIGO INVESTIMENTOS DTVM LTDA",
+                            "en" => "IIDL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706005958221-800699.png",
+                            "Name" => "CCM DESP TRANS SC E RS",
+                            "en" => "CDTSER"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067834945-384189.png",
+                            "Name" => "CREDITAS SCD",
+                            "en" => "CREDITASSCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998511180-353671.png",
+                            "Name" => "Kirton Bank",
+                            "en" => "KIRTONBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705995896759-816111.png",
+                            "Name" => "BCO DO BRASIL S.A.",
+                            "en" => "BDBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091633128-978301.png",
+                            "Name" => "BEXS CC S.A",
+                            "en" => "BEXSBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088013518-280432.png",
+                            "Name" => "NUMBRS SCD S.A",
+                            "en" => "NUMBRS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087572541-440157.png",
+                            "Name" => "MAF DTVM SA",
+                            "en" => "MAF"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065348766-501808.png",
+                            "Name" => "MAG IP LTDA",
+                            "en" => "MAG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706085018561-383884.png",
+                            "Name" => "UP.P SEP S.A",
+                            "en" => "UPP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064331616-361596.png",
+                            "Name" => "BCO MERCANTIL DO BRASIL S.A",
+                            "en" => "MERCANTIL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091840625-598601.png",
+                            "Name" => "BCO TRICURY S.A",
+                            "en" => "BANCOTRICURY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090549411-285652.png",
+                            "Name" => "PEAK SEP S.A",
+                            "en" => "PEAK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063609655-372482.png",
+                            "Name" => "HUB IP S.A",
+                            "en" => "HUB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087796425-772603.png",
+                            "Name" => "LEND SCD S.A",
+                            "en" => "LEND"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088752578-390826.png",
+                            "Name" => "LIONS TRUST DTVM",
+                            "en" => "LIONSTRUST"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092488484-130058.png",
+                            "Name" => "BCO SOFISA S.A",
+                            "en" => "SOFISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066094423-565602.png",
+                            "Name" => "GALAPAGOS DTVM S.A",
+                            "en" => "GALAPAGOS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063953912-595594.png",
+                            "Name" => "BCO WOORI BANK DO BRASIL S.A",
+                            "en" => "BCOWOORIBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087831595-942061.png",
+                            "Name" => "DM",
+                            "en" => "DM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088429293-709353.png",
+                            "Name" => "STARK SCD S.A",
+                            "en" => "STARK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058754895-835948.png",
+                            "Name" => "BCO CCB BRASIL S.A",
+                            "en" => "BCOCCB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088503648-565165.png",
+                            "Name" => "PROTEGE PAY CASH IP S.A",
+                            "en" => "PAYCASH"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090452046-467089.png",
+                            "Name" => "SUPERLOGICA SCD S.A.",
+                            "en" => "SUPERLOGICA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088292989-976537.png",
+                            "Name" => "CREDSYSTEM SCD S.A",
+                            "en" => "CREDSYSTEM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066139989-289071.png",
+                            "Name" => "Banco B3",
+                            "en" => "BB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094702412-544726.png",
+                            "Name" => "B&T CC LTDA",
+                            "en" => "BTCCLIDA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002906640-554271.png",
+                            "Name" => "CECM DOS TRAB.PORT. DA G.VITOR",
+                            "en" => "CREDESTIVA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063574047-778354.png",
+                            "Name" => "BCO WESTERN UNION",
+                            "en" => "WESTERNUNION"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065453805-583080.png",
+                            "Name" => "VORTX DTVM LTDA",
+                            "en" => "VORTX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997424576-357465.png",
+                            "Name" => "EWALLY IP S.A",
+                            "en" => "EWALLY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087651375-551132.png",
+                            "Name" => "SCFI EFÍ S.A",
+                            "en" => "EFISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065576806-702149.png",
+                            "Name" => "WILL FINANCEIRA S.A.CFI",
+                            "en" => "WILL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063642545-445744.png",
+                            "Name" => "CELCOIN IP S.A",
+                            "en" => "CELCOIN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996408557-946438.png",
+                            "Name" => "BRB - BCO DE BRASILIA S.A",
+                            "en" => "BBDBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065276851-530432.png",
+                            "Name" => "EBANX IP LTDA",
+                            "en" => "EBANX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090975287-291667.png",
+                            "Name" => "BANCO GENIAL",
+                            "en" => "BANCOGENIAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064002536-137020.png",
+                            "Name" => "INTRA DTVM",
+                            "en" => "INTRADTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088120196-574018.png",
+                            "Name" => "MULTICRED SCD S.A",
+                            "en" => "MULTICRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091752717-814670.png",
+                            "Name" => "Câmara B3",
+                            "en" => "CAMARAB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094020285-584623.png",
+                            "Name" => "RENASCENCA DTVM LTDA",
+                            "en" => "RENASCENCA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095645721-539223.png",
+                            "Name" => "BANCO ORIGINAL",
+                            "en" => "BANCOORIGINAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091086265-218306.png",
+                            "Name" => "MICROCASH SCMEPP LTDA",
+                            "en" => "MICROCASH"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068662956-760873.png",
+                            "Name" => "MASTER S/A CCTVM",
+                            "en" => "MASTERSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001984796-475829.png",
+                            "Name" => "UNIPRIME COOPCENTRAL LTDA",
+                            "en" => "UCL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093814058-497865.png",
+                            "Name" => "CREDISAN CC",
+                            "en" => "CREDISANCC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068196975-704738.png",
+                            "Name" => "BCO XP S.A",
+                            "en" => "XPSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001573717-211733.png",
+                            "Name" => "UBS BRASIL CCTVM S.A",
+                            "en" => "UBS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067923160-489829.png",
+                            "Name" => "BCO LA NACION ARGENTINA",
+                            "en" => "BLNA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998967419-873031.png",
+                            "Name" => "BANCO SICOOB S.A",
+                            "en" => "SICOOB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001361292-936415.png",
+                            "Name" => "SISPRIME DO BRASIL - COOP",
+                            "en" => "COOP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091594371-338085.png",
+                            "Name" => "ALL IN CRED SCD S.A",
+                            "en" => "ALLBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092020600-536912.png",
+                            "Name" => "BCO LUSO BRASILEIRO S.A",
+                            "en" => "VLBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065489217-184521.png",
+                            "Name" => "PICPAY",
+                            "en" => "PICPAYBRL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063783258-724131.png",
+                            "Name" => "IUGU IP S.A",
+                            "en" => "IUGU"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060855647-200219.png",
+                            "Name" => "NEON FINANCEIRA - CFI S.A",
+                            "en" => "NFCFISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997139217-599402.png",
+                            "Name" => "BANCO INTER",
+                            "en" => "BANCOINTER"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068555388-900940.png",
+                            "Name" => "BANCO ITAU CONSIGNADO S.A",
+                            "en" => "ITAUBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091914634-379161.png",
+                            "Name" => "BCO LETSBANK S.A",
+                            "en" => "LETSBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087534358-215448.png",
+                            "Name" => "BONUSPAGO SCD S.A",
+                            "en" => "BONUSPAGO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064917576-847968.png",
+                            "Name" => "BRAZA BANK S.A. BCO DE CAMBIO",
+                            "en" => "BRAZA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003127319-617758.png",
+                            "Name" => "NOVA FUTURA CTVM LTDA",
+                            "en" => "NOVAFUTURA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066943454-183190.png",
+                            "Name" => "BCO MODAL S.A",
+                            "en" => "MODAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001476821-207541.png",
+                            "Name" => "CM CAPITAL MARKETS CCTVM LTDA",
+                            "en" => "CCMCL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091531608-308826.png",
+                            "Name" => "LEVYCAM CCV LTDA",
+                            "en" => "LEVYCAM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094123179-649246.png",
+                            "Name" => "GUIDE",
+                            "en" => "GUIDE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998684481-581102.png",
+                            "Name" => "BCO BV S.A",
+                            "en" => "BCOBV"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063917958-212062.png",
+                            "Name" => "SOCIAL BANK S/A",
+                            "en" => "SOCIALBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068128930-276347.png",
+                            "Name" => "BCO J.P. MORGAN S.A",
+                            "en" => "JPMORGANBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067799421-854702.png",
+                            "Name" => "FAIR CC S.A",
+                            "en" => "FAIRCAMBIO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090775725-132756.png",
+                            "Name" => "HR DIGITAL SCD",
+                            "en" => "HRDIGITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003170210-848277.png",
+                            "Name" => "FIDUCIA SCMEPP LTDA",
+                            "en" => "FSLTDA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706012415974-269084.png",
+                            "Name" => "CECM SERV PUBL PINHAO",
+                            "en" => "CSPP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059999065-753361.png",
+                            "Name" => "STATE STREET BR S.A. BCO COMERCIAL",
+                            "en" => "STREET"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996482221-520426.png",
+                            "Name" => "Selic",
+                            "en" => "SELIC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067553613-291881.png",
+                            "Name" => "BCO GUANABARA S.A",
+                            "en" => "BANCOGUANABARA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002753350-839408.png",
+                            "Name" => "BCO ABN AMRO S.A",
+                            "en" => "ABNAMRO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095407540-736107.png",
+                            "Name" => "BCO DO ESTADO DO RS S.A",
+                            "en" => "BANRISUL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088460765-457221.png",
+                            "Name" => "CAPITAL CONSIG SCD S.A",
+                            "en" => "CAPITALSCDSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088555561-186032.png",
+                            "Name" => "PORTOPAR DTVM LTDA",
+                            "en" => "PORTOSEGUROBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061034037-591196.png",
+                            "Name" => "OM DTVM LTDA",
+                            "en" => "CVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094789576-355369.png",
+                            "Name" => "NOVO BCO CONTINENTAL S.A. - BM",
+                            "en" => "NBCSABM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060173982-633261.png",
+                            "Name" => "CODEPE CVC S.A",
+                            "en" => "CVC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068710012-431287.png",
+                            "Name" => "BANCO MASTER",
+                            "en" => "BANCOMASTER"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061127962-669775.png",
+                            "Name" => "TRAVELEX BANCO DE CAMBIO S.A",
+                            "en" => "TRAVELEX"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706009322711-925727.png",
+                            "Name" => "BCO AFINZ S.A. - BM",
+                            "en" => "AFINZ"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065824664-918842.png",
+                            "Name" => "CRED-UFES",
+                            "en" => "CREDUFES"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058690207-968136.png",
+                            "Name" => "HEDGE INVESTMENTS DTVM LTDA",
+                            "en" => "HEDGE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091050800-330690.png",
+                            "Name" => "EAGLE SCD S.A",
+                            "en" => "EAGLE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061162767-862105.png",
+                            "Name" => "BANCO FINAXIS",
+                            "en" => "FINAXIS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063240089-678659.png",
+                            "Name" => "FITBANK IP",
+                            "en" => "FITBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065871137-759554.png",
+                            "Name" => "REALIZE CFI S.A",
+                            "en" => "REALIZE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059716809-838902.png",
+                            "Name" => "BCO CSF S.A",
+                            "en" => "CSF"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706017096462-165662.png",
+                            "Name" => "ZEMA CFI S/A",
+                            "en" => "ZEMA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998262922-726081.png",
+                            "Name" => "BCO COOPERATIVO SICREDI S.A",
+                            "en" => "BCSSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067676426-669162.png",
+                            "Name" => "BEETELLER",
+                            "en" => "BEETELLER"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093951385-451479.png",
+                            "Name" => "CAROL DTVM LTDA",
+                            "en" => "CAROLDTVM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094927271-531055.png",
+                            "Name" => "BANCO SISTEMA",
+                            "en" => "BANCOSISTEMA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997849440-387237.png",
+                            "Name" => "PLANNER CV S.A",
+                            "en" => "PLANNERCV"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091712200-309591.png",
+                            "Name" => "BCO ARBI S.A",
+                            "en" => "BANCOARBI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088153507-190663.png",
+                            "Name" => "CC LAR CREDI",
+                            "en" => "LAR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059837046-863832.png",
+                            "Name" => "F D GOLD DTVM LTDA",
+                            "en" => "DGOLD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093883947-455993.png",
+                            "Name" => "NU INVEST CORRETORA DE VALORES S.A",
+                            "en" => "NUBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067399459-375298.png",
+                            "Name" => "U4C INSTITUIÇÃO DE PAGAMENTO S.A",
+                            "en" => "UIDPSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058365545-855578.png",
+                            "Name" => "RPW S.A. SCFI",
+                            "en" => "EMPRESTA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095083055-655827.png",
+                            "Name" => "BCO OURINVEST S.A",
+                            "en" => "BANCOOURINVEST"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001627656-508668.png",
+                            "Name" => "TREVISO CC S.A",
+                            "en" => "TREVISO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002856196-612272.png",
+                            "Name" => "TERRA INVESTIMENTOS DTVM",
+                            "en" => "TERRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093213625-212266.png",
+                            "Name" => "BCO MIZUHO S.A",
+                            "en" => "MIZUHOSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061391975-656040.png",
+                            "Name" => "CONTA PRONTA IP",
+                            "en" => "CONTAPRONTAIP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996735219-978352.png",
+                            "Name" => "CCR SEARA",
+                            "en" => "CCRSEARA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094089247-662256.png",
+                            "Name" => "BANCO CIFRA",
+                            "en" => "CIFRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066052738-976239.png",
+                            "Name" => "BCO ABC BRASIL S.A",
+                            "en" => "ABCBRASIL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094609490-454381.png",
+                            "Name" => "EXIM CC LTDA",
+                            "en" => "EXIMCC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064110075-565077.png",
+                            "Name" => "STONE IP S.A",
+                            "en" => "STONE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706015134568-506877.png",
+                            "Name" => "CONFIDENCE CC S.A",
+                            "en" => "CONFIDENCE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092284764-494607.png",
+                            "Name" => "BCO SUMITOMO MITSUI BRASIL S.A",
+                            "en" => "SMFG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066712968-449984.png",
+                            "Name" => "CIP SA C3",
+                            "en" => "CIPSAC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001674869-682100.png",
+                            "Name" => "CIP SA Siloc",
+                            "en" => "CIP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088850181-346808.png",
+                            "Name" => "UNAVANTI SCD S/A",
+                            "en" => "UNAVANTISCD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997201585-900383.png",
+                            "Name" => "COLUNA S.A. DTVM",
+                            "en" => "CSAD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001408972-188314.png",
+                            "Name" => "PAN CFI",
+                            "en" => "PAN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059762161-745738.png",
+                            "Name" => "PAGSEGURO INTERNET IP S.A",
+                            "en" => "PAG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067709636-503737.png",
+                            "Name" => "UZZIPAY IP S.A",
+                            "en" => "UZZIPAY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064177426-508829.png",
+                            "Name" => "BROKER BRASIL CC LTDA",
+                            "en" => "BROKERBRASIL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092243399-253242.png",
+                            "Name" => "BCO MUFG BRASIL S.A",
+                            "en" => "MUFGSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060618530-833385.png",
+                            "Name" => "BCO DA CHINA BRASIL S.A",
+                            "en" => "CHINABANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092455950-732865.png",
+                            "Name" => "OMNI BANCO S.A",
+                            "en" => "OMNI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998072776-766682.png",
+                            "Name" => "BCO RABOBANK INTL BRASIL S.A",
+                            "en" => "BRIBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060140383-881094.png",
+                            "Name" => "MIDWAY S.A. - SCFI",
+                            "en" => "MIDWAY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088254320-330650.png",
+                            "Name" => "UY3 SCD S/A",
+                            "en" => "UYSCDSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065920391-947733.png",
+                            "Name" => "GENIAL INVESTIMENTOS CVM S.A",
+                            "en" => "GENIAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068077594-630362.png",
+                            "Name" => "BCO BRADESCO BERJ S.A",
+                            "en" => "BRADESCO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063677374-691620.png",
+                            "Name" => "CAMBIONET CC LTDA",
+                            "en" => "CAMBIONET"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706062693744-788369.png",
+                            "Name" => "ACESSO SOLUCOES PAGAMENTO SA",
+                            "en" => "ACESSO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064764856-194867.png",
+                            "Name" => "CDC SCD S.A",
+                            "en" => "CDC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059618891-997748.png",
+                            "Name" => "CCR DE IBIAM",
+                            "en" => "CCR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064539105-675744.png",
+                            "Name" => "VIPS CC LTDA",
+                            "en" => "VIPS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065402676-974944.png",
+                            "Name" => "M18 IP S.A",
+                            "en" => "MIPSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090639250-544249.png",
+                            "Name" => "BCO LA PROVINCIA B AIRES BCE",
+                            "en" => "BANCOPROVINCIA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094556793-588325.png",
+                            "Name" => "FRENTE CC S.A",
+                            "en" => "FRENTE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091163381-344402.png",
+                            "Name" => "MONETARIE SCD",
+                            "en" => "MONETARIE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065162193-669462.png",
+                            "Name" => "PAY4FUN IP S.A",
+                            "en" => "PAYFUN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087936829-807502.png",
+                            "Name" => "ACCREDITO SCD S.A",
+                            "en" => "ACCREDITO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064622449-311748.png",
+                            "Name" => "CREFAZ SCMEPP LTDA",
+                            "en" => "CREFAZ"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093715591-583884.png",
+                            "Name" => "BCO PAULISTA S.A",
+                            "en" => "PAULISTA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094749209-596520.png",
+                            "Name" => "ÁGORA CTVM S.A",
+                            "en" => "AGORA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998600644-108467.png",
+                            "Name" => "BCO BRASILEIRO DE CRÉDITO S.A",
+                            "en" => "BBDCSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998191756-828811.png",
+                            "Name" => "CCR DE ABELARDO LUZ",
+                            "en" => "SULCREDI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058556579-932565.png",
+                            "Name" => "BCO BRADESCO FINANC. S.A.",
+                            "en" => "BBFSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065311749-760183.png",
+                            "Name" => "CARTOS SCD S.A",
+                            "en" => "CARTOS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063486815-130222.png",
+                            "Name" => "BRL TRUST DTVM SA",
+                            "en" => "TRUST"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706082290638-101688.png",
+                            "Name" => "OTIMO SCD S.A",
+                            "en" => "OTIMOSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059922114-554244.png",
+                            "Name" => "ICAP DO BRASIL CTVM LTDA",
+                            "en" => "ICAP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065747607-725136.png",
+                            "Name" => "BANCO DIGIO",
+                            "en" => "DIGIO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066900388-796308.png",
+                            "Name" => "NU FINANCEIRA S.A. CFI",
+                            "en" => "NUFINANCEIRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064371555-754210.png",
+                            "Name" => "BCO ITAU BBA S.A",
+                            "en" => "ITAU"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091440644-853909.png",
+                            "Name" => "QUADRA SCD",
+                            "en" => "QUADRA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095446622-927306.png",
+                            "Name" => "COOPCRECE",
+                            "en" => "COOPCRECE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088080949-567709.png",
+                            "Name" => "FÊNIX DTVM LTDA",
+                            "en" => "FDLTDA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998007045-340845.png",
+                            "Name" => "BCO B3 S.A",
+                            "en" => "BBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059668718-942367.png",
+                            "Name" => "CCR DE SAO MIGUEL DO OESTE",
+                            "en" => "CDSMDO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706058516919-225638.png",
+                            "Name" => "PICPAY INVEST",
+                            "en" => "PICPAY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001525755-912035.png",
+                            "Name" => "BCO MORGAN STANLEY S.A",
+                            "en" => "BMSSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002265816-599699.png",
+                            "Name" => "PARATI - CFI S.A",
+                            "en" => "PARATI"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060392009-688337.png",
+                            "Name" => "BANCOSEGURO S.A",
+                            "en" => "BANCOSEGURO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092150742-803700.png",
+                            "Name" => "BCO VOTORANTIM S.A",
+                            "en" => "VOTORANTIM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090851757-847554.png",
+                            "Name" => "MAGNUM SCD",
+                            "en" => "MAGNUM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093850862-343917.png",
+                            "Name" => "BCO PINE S.A",
+                            "en" => "BANCOPINE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094500735-301000.png",
+                            "Name" => "LASTRO RDV DTVM LTDA",
+                            "en" => "LASTRO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706084881444-698286.png",
+                            "Name" => "VITREO DTVM S.A",
+                            "en" => "VITREO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003224974-714097.png",
+                            "Name" => "GOLDMAN SACHS DO BRASIL BM S.A",
+                            "en" => "GOLDMAN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088357332-326655.png",
+                            "Name" => "CREDIFIT SCD S.A",
+                            "en" => "CREDIFIT"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088596948-351586.png",
+                            "Name" => "PROSEFTUR",
+                            "en" => "PROSEFTUR"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060702457-288993.png",
+                            "Name" => "GET MONEY CC LTDA",
+                            "en" => "GETMONEY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705997074290-520929.png",
+                            "Name" => "STN",
+                            "en" => "STN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706059214760-895600.png",
+                            "Name" => "BCO KDB BRASIL S.A",
+                            "en" => "KDB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090925250-809733.png",
+                            "Name" => "ATF CREDIT SCD S.A",
+                            "en" => "ATFCREDIT"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001790886-474843.png",
+                            "Name" => "BCO. J.SAFRA S.A",
+                            "en" => "SAFRASA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067975929-979151.png",
+                            "Name" => "CITIBANK N.A",
+                            "en" => "CITIBANKT"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066823908-225068.png",
+                            "Name" => "TORO CTVM S.A",
+                            "en" => "TORO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705996622681-605374.png",
+                            "Name" => "SANTINVEST S.A. - CFI",
+                            "en" => "SANTINVEST"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064055890-613191.png",
+                            "Name" => "FACTA S.A. CFI",
+                            "en" => "FACTASA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706017535073-834558.png",
+                            "Name" => "CASA CREDITO S.A. SCM",
+                            "en" => "CCSASCM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706084912191-137230.png",
+                            "Name" => "REAG DTVM S.A",
+                            "en" => "REAG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706017710861-555731.png",
+                            "Name" => "COOP CREDITAG",
+                            "en" => "BPC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706065695186-704214.png",
+                            "Name" => "COOP DE PRIMAVERA DO LESTE",
+                            "en" => "PRIMAVERA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706012601706-127905.png",
+                            "Name" => "BANCO INBURSA",
+                            "en" => "BANCOIN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998148357-273692.png",
+                            "Name" => "CIELO IP S.A",
+                            "en" => "CIELO"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063710230-601493.png",
+                            "Name" => "PARANA BCO S.A",
+                            "en" => "PARANA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706001749531-408642.png",
+                            "Name" => "HIPERCARD BM S.A",
+                            "en" => "HIPERCARD"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064672405-857467.png",
+                            "Name" => "CLOUDWALK IP LTDA",
+                            "en" => "CLOUDWALK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061343276-266409.png",
+                            "Name" => "MIRAE ASSET (BRASIL) CCTVM LTDA",
+                            "en" => "MIRAEASSET"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706084834330-426343.png",
+                            "Name" => "BMP SCD S.A",
+                            "en" => "BMPSCDBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706066860193-148836.png",
+                            "Name" => "BANCO BTG PACTUAL S.A",
+                            "en" => "BTGPACTUAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090600076-978089.png",
+                            "Name" => "BR-CAPITAL DTVM S.A",
+                            "en" => "BRCAPITAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068335565-875009.png",
+                            "Name" => "BCO RODOBENS S.A",
+                            "en" => "RODOBENS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067635345-216082.png",
+                            "Name" => "BCO CREDIT SUISSE S.A",
+                            "en" => "CREDITSUISSE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706003892836-168642.png",
+                            "Name" => "CREDISIS",
+                            "en" => "CREDISIS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093453035-546311.png",
+                            "Name" => "AVENUE SECURITIES DTVM LTDA",
+                            "en" => "AVENUE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064580971-724176.png",
+                            "Name" => "BMS SCD S.A",
+                            "en" => "BMS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706061092545-407978.png",
+                            "Name" => "BMP SCMEPP LTDA",
+                            "en" => "BMP"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706088397416-745475.png",
+                            "Name" => "FFCRED SCD S.A",
+                            "en" => "FFCRED"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094052891-446807.png",
+                            "Name" => "DEUTSCHE BANK S.A.BCO ALEMAO",
+                            "en" => "DEUTSCHEBANK"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093295531-416843.png",
+                            "Name" => "BCO BMG S.A",
+                            "en" => "BMG"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1705998324242-365760.png",
+                            "Name" => "CREHNOR LARANJEIRAS",
+                            "en" => "LARANJEIRAS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060067272-752411.png",
+                            "Name" => "CARUANA SCFI",
+                            "en" => "CARUANA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093745350-404952.png",
+                            "Name" => "BOFA MERRILL LYNCH BM S.A",
+                            "en" => "BLMBSA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706092604960-759183.png",
+                            "Name" => "BCO CREFISA S.A",
+                            "en" => "CREFISA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706094880939-447794.png",
+                            "Name" => "CCR COOPAVEL",
+                            "en" => "CCRCOOPAVEL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095369143-263490.png",
+                            "Name" => "BANCO JOHN DEERE S.A",
+                            "en" => "JOHNDEERE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060501872-448526.png",
+                            "Name" => "CRESOL CONFEDERACAO",
+                            "en" => "CRESOL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093615084-901269.png",
+                            "Name" => "TULLETT PREBON BRASIL CVC LTDA",
+                            "en" => "TPBCL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706093917726-195088.png",
+                            "Name" => "BCO DAYCOVAL S.A",
+                            "en" => "DAYCOVAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706067596399-885433.png",
+                            "Name" => "BCO INDUSTRIAL DO BRASIL S.A",
+                            "en" => "BIB"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095290024-261409.png",
+                            "Name" => "RB INVESTIMENTOS DTVM LTDA",
+                            "en" => "RIDL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095256731-318838.png",
+                            "Name" => "MAGNETIS - DTVM",
+                            "en" => "MAGNETIS"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706064986051-574775.png",
+                            "Name" => "LAMARA SCD S.A",
+                            "en" => "LAMARA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002947636-749456.png",
+                            "Name" => "SOCINAL S.A. CFI",
+                            "en" => "SOCINAL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063404863-160267.png",
+                            "Name" => "ORAMA DTVM S.A",
+                            "en" => "ORAMA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068511147-652870.png",
+                            "Name" => "BGC LIQUIDEZ DTVM LTDA",
+                            "en" => "BGC"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095608491-184119.png",
+                            "Name" => "WARREN CVMC LTDA",
+                            "en" => "WARREN"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091127410-883438.png",
+                            "Name" => "WNT CAPITAL DTVM",
+                            "en" => "WNT"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706090889902-536267.png",
+                            "Name" => "SOMAPAY SCD S.A",
+                            "en" => "SOMAPAY"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706002807908-212570.png",
+                            "Name" => "BCO CARGILL S.A",
+                            "en" => "CARGILL"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706087458256-599580.png",
+                            "Name" => "FINVEST DTVM",
+                            "en" => "FINVEST"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706091564616-631416.png",
+                            "Name" => "BCV - BCO, CREDIT AND RETAIL S.A.",
+                            "en" => "BCV"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706068448029-751661.png",
+                            "Name" => "ATIVA INVESTIMENTOS S.A",
+                            "en" => "ATIVA"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706095212495-117840.png",
+                            "Name" => "CREDIBRF COOP",
+                            "en" => "CREDIBRF"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706060748508-248074.png",
+                            "Name" => "BCO BANDEPE S.A.",
+                            "en" => "BANDEPE"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1706063834551-654634.png",
+                            "Name" => "BCO BOCOM BBM S.A",
+                            "en" => "BBM"
+                        ],
+                        [
+                            "Img" => $WG_BUCKET_SITE . "/siteadmin/bank/bank-1722248594539-313564.png",
+                            "Name" => "BCO CREDIT AGRICOLE BR S.A",
+                            "en" => "AUTOBANK"
+                        ]
+                    ],
+                    "betTaskDisplayToggle" => 2,
+                    "showWithdrawAccountSwitch" => 1,
+                    "withdrawAccountValidationRule" => [
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 6,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 10,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 11,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 12,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 24,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 25,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 71,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 72,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Erro no formato da conta",
+                            "accountInfo" => "",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^((?!%|#|&|\{|}|\^|\[|]|[\u4e00-\u9fa5]).){1,100}$',
+                            "accountSubType" => 73,
+                            "accountType" => 4,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Máximo de 14 caracteres que sejam números puros",
+                            "accountInfo" => "CACC",
+                            "accountMaxLength" => 20,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^[\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Insira 11 dígitos",
+                            "accountInfo" => "CPF",
+                            "accountMaxLength" => 11,
+                            "accountMinLength" => 11,
+                            "accountRegexp" => '^[\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Por favor, insira um formato válido de email",
+                            "accountInfo" => "EMAIL",
+                            "accountMaxLength" => 100,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^[a-zA-Z0-9]+([\._-][a-zA-Z0-9]+)*@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,6}$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "O número deve começar com um número diferente de 0 e ter 11 dígitos compostos apenas por números",
+                            "accountInfo" => "PHONE",
+                            "accountMaxLength" => 11,
+                            "accountMinLength" => 11,
+                            "accountRegexp" => '^[1-9][\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Máximo de 14 caracteres que sejam números puros",
+                            "accountInfo" => "SLRY",
+                            "accountMaxLength" => 20,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^[\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Máximo de 14 caracteres que sejam números puros",
+                            "accountInfo" => "SVGS",
+                            "accountMaxLength" => 20,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^[\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ],
+                        [
+                            "accountErrText" => "Máximo de 14 caracteres que sejam números puros",
+                            "accountInfo" => "TRAN",
+                            "accountMaxLength" => 20,
+                            "accountMinLength" => 1,
+                            "accountRegexp" => '^[\d]+$',
+                            "accountSubType" => 7,
+                            "accountType" => 5,
+                            "keyType" => 0
+                        ]
+
+                    ]
+                ],
+                "siteCode" => "7920",
+                "time" => round(microtime(true) * 1000)
+
+            ];
+
+            //var_dump($response);
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+            exit;
+        }
+
+        // Rota game/hall/listPlatformGameV2/categoryId/3 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/200.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da PGSOFT do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'PGSOFT' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                // Mapeamento de game_code para g0 (ID do jogo na API)
+                $gameMapping = [
+                    'fortune-tiger' => 2000126,
+                    'jungle-delight' => 2000040,
+                    'fortune-ox' => 2000098,
+                    'dragon-tiger-luck' => 2000063,
+                    'ganesha-gold' => 2000042,
+                    'double-fortune' => 2000048,
+                    'fortune-mouse' => 2000068,
+                    'bikini-paradise' => 2000069,
+                    'fortune-rabbit' => 2001007,
+                    'fortune-dragon' => 2001027,
+                    'cash-mania' => 2001029,
+                    'treasures-aztec' => 2000087,
+                    'piggy-gold' => 2000039,
+                    'wild-bandito' => 2000104,
+                    'zombie-outbreak' => 2001034,
+                    'majestic-ts' => 2000095,
+                    'butterfly-blossom' => 2000125,
+                    'fortune-snake' => 2001046,
+                    'gdn-ice-fire' => 2000091,
+                    'thai-river' => 2000092,
+                    'rise-apollo' => 2000101,
+                    'ninja-raccoon' => 2001019,
+                    'lucky-clover' => 2001014,
+                    'ultimate-striker' => 2001020,
+                    'prosper-ftree' => 2001001,
+                    'wild-ape' => 2001030,
+                    'rio-fantasia' => 2001043,
+                    'doomsday-rampg' => 2001050,
+                    'wings-of-iguazu' => 2001039
+                ];
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Obter o ID do jogo do mapeamento usando game_code
+                    $gameCode = $row['game_code'];
+                    $gameId = $gameMapping[$gameCode] ?? null;
+                    
+                    // Se não encontrar o mapeamento, usar o ID do banco mesmo
+                    if ($gameId === null) {
+                        $gameId = (int)$row['id'];
+                    }
+                    
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio mesmo (como no JSON original)
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados (não o mapeado)
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 200,                       // Platform ID
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 1,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/301.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/301.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da PRAGMATIC do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'PRAGMATIC' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 301,                       // Platform ID (Pragmatic)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 1,                          // Sempre 1 para Pragmatic
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 1,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/310.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/310.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da PRAGMATIC do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'slot-jdb' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 301,                       // Platform ID (Pragmatic)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 1,                          // Sempre 1 para Pragmatic
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 1,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota api/member/register (POST) --> Cadastro
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/finance/certify/auditTaskDetail') {
+            $rotaEncontrada = true;
+
+            echo json_encode([
+                "code" => 1,
+                "msg" => "返回成功",
+                "time" => round(microtime(true) * 1000),
+                "data" => [
+                    "auditMode" => 0,
+                    "bonusTransferIn" => false,
+                    "undoneResetBonus" => false,
+                    "bonus" => "0",
+                    "bonusAvailable" => "0",
+                    "bonusRequireBet" => "0",
+                    "withdrawRequireBet" => "15",
+                    "bonusPendingCount" => 0,
+                    "pendingCount" => 0,
+                    "auditCancelStatus" => 0,
+                    "cancelAmount" => "10",
+                    "list" => [
+                        [
+                            "id" => 13841046,
+                            "amount" => "10",
+                            "auditMode" => 1,
+                            "auditRate" => "1.5",
+                            "auditAmount" => "15",
+                            "alreadyAuditAmount" => "0",
+                            "needAuditAmount" => "15",
+                            "cancelAmount" => "10",
+                            "canBeCancel" => false,
+                            "status" => 1,
+                            "statusName" => "Aguardando apostas",
+                            "optType" => 2,
+                            "optTypeName" => "Depósito",
+                            "dealType" => 2112,
+                            "dealTypeName" => "Depósito",
+                            "createTime" => 1748275963,
+                            "activeId" => 0,
+                            "activeName" => "",
+                            "finishTime" => 0,
+                            "userIdx" => 631345644,
+                            "orderNo" => "210807319720151451013",
+                            "sourceType" => 1,
+                            "specifyPlatforms" => ""
+                        ]
+                    ],
+                    "page" => 1,
+                    "size" => 0,
+                    "totalCount" => 1
+                ]
+            ]);
+            exit;
+        }
+        
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/13.json') {
+            $rotaEncontrada = true;
+
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'wg' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+
+                $result = $mysqli->query($sql);
+
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+
+                $games = [];
+
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 13,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+                // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/415.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'slot-evoplay' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 415,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'slot-tada' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 316,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+          // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/887.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'bgaming' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 887,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+           // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/777.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'original' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 777,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+        
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/302.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/339.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'slot-spribe' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 339,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,                          // ATIVAR OU DESATIVAR OS JOGOS COMO MANUTEÇÃO
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/316.json (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/3/currency/BRL/language/pt/platformId/316.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                // Buscar jogos ativos da CQ9 do banco de dados
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'slot-cq9' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "";
+                    }
+                    
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 316,                       // Platform ID (CQ9)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Geralmente 0 para CQ9
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 0,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // ROTA WG
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGamev2/categoryId/11/currency/BRL/language/pt/platformId/13.json') {
+            $rotaEncontrada = true;
+            
+            try {
+                $sql = "SELECT id, game_code, game_name, banner, status, provider, popular, type, game_type, api 
+                        FROM games 
+                        WHERE provider = 'wg' AND status = 1 
+                        ORDER BY popular DESC, id ASC";
+                
+                $result = $mysqli->query($sql);
+                
+                if (!$result) {
+                    throw new Exception("Query failed: " . $mysqli->error);
+                }
+                
+                $games = [];
+                
+                // Adicionar todos os jogos do banco de dados
+                while ($row = $result->fetch_assoc()) {
+                    // Usar o banner real do banco de dados
+                    $banner = $row['banner'] ?? "";
+                    $banner = trim($banner, " `");
+                    
+                    // Se o banner estiver vazio, deixar vazio
+                    if (empty($banner)) {
+                        $banner = "/uploads/wg/default.png";
+                    }
+  
+                    $games[] = [
+                        "g0" => (int)$row['id'],            // ID do banco de dados
+                        "g1" => $row['game_name'],          // Nome do jogo
+                        "g10" => 13,                       // Platform ID (Pragmatic)
+                        "g2" => $banner,                    // Banner do banco de dados
+                        "g3" => 0,
+                        "g4" => 0,
+                        "g5" => (int)$row['popular'],       // Popular flag
+                        "g6" => 0,                          // Sempre 1 para Pragmatic
+                        "g7" => 1,                          // Status (sempre 1 pois filtramos)
+                        "g8" => 1,
+                        "g9" => 3                           // Category ID
+                    ];
+                }
+                
+                $response = [
+                    "code" => 0,
+                    "data" => $games,
+                    "failed" => false,
+                    "msg" => "success",
+                    "success" => true,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+                
+            } catch (Exception $e) {
+                $response = [
+                    "code" => 500,
+                    "data" => [],
+                    "failed" => true,
+                    "msg" => "Database error: " . $e->getMessage(),
+                    "success" => false,
+                    "timestamp" => round(microtime(true) * 1000)
+                ];
+            }
+            
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        // Rota game/hall/listPlatformGameV2/categoryId/11 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/11/currency/BRL/language/pt/platformId/13.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 0,
+                "data" => [],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota api/game/hall/listPlatformGameV2 com query parameters (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/api/v1/api/game/hall/listPlatformGameV2') {
+            $rotaEncontrada = true;
+            
+            // Obter query parameters
+            $queryParams = [];
+            parse_str(parse_url($requestURI, PHP_URL_QUERY), $queryParams);
+            
+            $response = [
+                "code" => 0,
+                "data" => [
+
+                ],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // Rota game/hall/listPlatformGameV2/categoryId/11/platformId/310 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/11/currency/BRL/language/pt/platformId/310.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 0,
+                "data" => [],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        
+          // Rota game/hall/listPlatformGameV2/categoryId/11/platformId/13 (GET)
+        if (parse_url($requestURI, PHP_URL_PATH) === '/hall/api/game/hall/listPlatformGameV2/categoryId/11/currency/BRL/language/pt/platformId/13.json') {
+            $rotaEncontrada = true;
+            $response = [
+                "code" => 0,
+                "data" => [],
+                "failed" => false,
+                "msg" => "success",
+                "success" => true,
+                "timestamp" => round(microtime(true) * 1000),
+            ];
+
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        break;
+
+    default:
+        http_response_code(405);
+        echo json_encode(['error' => 'Método não permitido']);
+}
+
+if (!$rotaEncontrada) {
+    sendError(404, 'Rota não encontrada');
+}

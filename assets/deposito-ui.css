@@ -1,0 +1,534 @@
+/* =====================================================
+   UI - Depósito - Layout de Referência
+   Aplicado ao popup de depósito da SPA
+   ===================================================== */
+
+:root {
+  --bg-page: #5b5b5b;
+  --panel-bg: #171a1f;
+  --panel-alt: #1c2027;
+  --border-soft: #3a3f46;
+  --border-strong: #f04a4a;
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --text-link: #ffc221;
+  --accent: #ffc107;
+  --accent-dark: #9d6e10;
+  --accent-soft: #7a5c1e;
+  --cta-bg: #ffbe00;
+  --cta-text: #141414;
+}
+
+/* Container principal quando aplicado ao popup */
+.deposit-ui,
+.recharge-out .ui-dialog__body,
+.recharge-out .ui-dialog__content {
+  --bg-page: #5b5b5b;
+  --panel-bg: #171a1f;
+  --panel-alt: #1c2027;
+  --border-soft: #3a3f46;
+  --border-strong: #f04a4a;
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --text-link: #ffc221;
+  --accent: #ffc107;
+  --accent-dark: #9d6e10;
+  --accent-soft: #7a5c1e;
+  --cta-bg: #ffbe00;
+  --cta-text: #141414;
+}
+
+.deposit-ui {
+  min-height: 100vh;
+  display: grid;
+  place-items: start center;
+  padding: 14px 8px 22px;
+}
+
+.deposit-card {
+  width: 100%;
+  max-width: 520px;
+  background: linear-gradient(180deg, #171a1f 0%, #14171c 100%);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.deposit-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.deposit-header h1 {
+  margin: 0;
+  text-align: center;
+  font-size: clamp(24px, 4.8vw, 36px);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.icon-btn,
+.header-icon {
+  color: var(--accent);
+}
+
+.icon-btn {
+  border: 0;
+  background: transparent;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-icon {
+  font-size: 20px;
+}
+
+.payment-title {
+  margin: 0 0 8px;
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.payment-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.payment-tab {
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid #4a4f57;
+  background: #1a1e24;
+  color: #c4c7cc;
+  font-size: 31px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.payment-tab:hover {
+  border-color: #828894;
+}
+
+.payment-tab.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 rgba(255, 193, 7, 0.85);
+}
+
+.amount-section {
+  border-top: 1px solid #353b43;
+  padding-top: 12px;
+}
+
+.amount-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.amount-head h3 {
+  margin: 0;
+  font-size: 35px;
+  font-weight: 600;
+}
+
+.bonus-link {
+  border: 0;
+  background: transparent;
+  color: var(--text-link);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.amount-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.amount-chip {
+  min-height: 74px;
+  border: 1px solid #464c54;
+  border-radius: 10px;
+  background: #1c2027;
+  color: #d7dbe0;
+  font-size: 36px;
+  font-weight: 500;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.amount-chip:hover {
+  border-color: #6b727d;
+}
+
+.amount-chip.has-bonus {
+  align-content: stretch;
+  padding: 0;
+}
+
+.amount-chip.has-bonus span {
+  display: grid;
+  place-items: center;
+  min-height: 46px;
+  width: 100%;
+}
+
+.amount-chip.has-bonus small {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 28px;
+  border-radius: 0 0 9px 9px;
+  color: #ffe156;
+  background: linear-gradient(180deg, #6c5120 0%, #8f6a22 100%);
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.custom-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 58px;
+  border: 1px solid #4b525b;
+  border-radius: 10px;
+  background: #171b21;
+  padding: 0 14px;
+}
+
+.currency-prefix {
+  font-size: 36px;
+  color: #f7f7f8;
+}
+
+.custom-amount input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #c0c6cf;
+  font-size: 36px;
+}
+
+.custom-amount input::placeholder {
+  color: #8590a0;
+}
+
+.remember-label {
+  margin: 12px 0 8px;
+  font-size: 36px;
+}
+
+.offer-box {
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 12px 10px;
+  background: linear-gradient(180deg, rgba(20, 24, 31, 0.96) 0%, rgba(18, 20, 25, 0.96) 100%);
+}
+
+.offer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.offer-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gift-icon {
+  font-size: 24px;
+}
+
+.offer-header h4 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 700;
+}
+
+.offer-timer-badge {
+  display: inline-flex;
+  align-items: center;
+  background: #131722;
+  border: 1px solid #ff5151;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.timer-tag {
+  background: linear-gradient(90deg, #ff8a3d 0%, #ff3d53 100%);
+  color: #ffe882;
+  font-weight: 700;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.timer-time {
+  color: #ff5a6a;
+  padding: 0 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.25px;
+  font-weight: 700;
+}
+
+.offer-subtitle {
+  margin: 10px 0 12px;
+  color: #e6e9ee;
+  text-align: center;
+  font-size: 14px;
+}
+
+.offer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.offer-item {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: #121821;
+  border-radius: 10px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+/* Barra amarela removida - causava overlap indesejado no botão */
+.offer-item::before {
+  display: none;
+}
+
+.offer-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.offer-item-icon {
+  font-size: 22px;
+}
+
+.offer-left strong {
+  color: #ffcb00;
+  font-size: 26px;
+  white-space: nowrap;
+}
+
+.offer-item p {
+  margin: 0;
+  color: #f2f4f8;
+  font-size: 16px;
+  text-align: right;
+}
+
+.expand-btn {
+  display: block;
+  margin: 14px auto 4px;
+  border: 0;
+  background: transparent;
+  color: #00bfff;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submit-btn {
+  margin-top: 14px;
+  width: 100%;
+  height: 54px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--cta-bg);
+  color: var(--cta-text);
+  font-size: 30px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.2s ease;
+}
+
+.submit-btn:hover {
+  filter: brightness(0.95);
+}
+
+.submit-btn:active {
+  filter: brightness(0.9);
+}
+
+@media (max-width: 520px) {
+  .payment-title {
+    font-size: 26px;
+  }
+
+  .payment-tab {
+    font-size: 30px;
+  }
+
+  .amount-head h3 {
+    font-size: 32px;
+  }
+
+  .bonus-link {
+    font-size: 18px;
+  }
+
+  .amount-chip {
+    font-size: 30px;
+    min-height: 68px;
+  }
+
+  .amount-chip.has-bonus small {
+    font-size: 26px;
+  }
+
+  .currency-prefix,
+  .custom-amount input,
+  .remember-label,
+  .submit-btn {
+    font-size: 28px;
+  }
+
+  .offer-left strong {
+    font-size: 23px;
+  }
+}
+
+/* =====================================================
+   Override: Aplicar visual deposit-ui à tela de depósito da SPA
+   Target: view main-recharge (full-screen, não popup)
+   ===================================================== */
+
+/* Container principal da view de depósito */
+#app [class*="main-recharge"],
+#app [class*="_main-recharge_"] {
+  background: #5b5b5b !important;
+  min-height: 100% !important;
+}
+
+/* Quando a view de depósito está visível, estilizar o layout pai */
+#app [class*="section-content"]:has([class*="main-recharge"]),
+#app [class*="_section-content_"]:has([class*="main-recharge"]) {
+  background: #5b5b5b !important;
+}
+
+/* Header da tela de depósito */
+#app .lobby-base-header:has(~ * [class*="main-recharge"]),
+body:has([class*="main-recharge"]) .lobby-base-header,
+#app [class*="base-layout"]:has([class*="main-recharge"]) .lobby-base-header,
+#app [class*="base-layout"]:has([class*="main-recharge"]) > header {
+  background: linear-gradient(180deg, #171a1f 0%, #14171c 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: #ffc107 !important;
+}
+
+body:has([class*="main-recharge"]) .lobby-base-header__section,
+body:has([class*="main-recharge"]) .lobby-base-header__back {
+  color: #ffc107 !important;
+}
+
+/* Conteúdo - card escuro */
+#app [class*="main-recharge"] .ui-tab__panel,
+#app [class*="main-recharge"] [class*="tab__panel"],
+#app [class*="main-recharge"] .ui-tabs__content {
+  background: linear-gradient(180deg, #171a1f 0%, #14171c 100%) !important;
+  padding: 14px !important;
+}
+
+/* Tabs / métodos de pagamento - botões BRL-PIX */
+#app [class*="main-recharge"] .ui-tab,
+#app [class*="main-recharge"] [class*="ui-tab"],
+#app [class*="main-recharge"] .ui-tabs__wrap button,
+#app [class*="main-recharge"] [class*="tab"] {
+  height: 46px !important;
+  border-radius: 10px !important;
+  border: 1px solid #4a4f57 !important;
+  background: #1a1e24 !important;
+  color: #c4c7cc !important;
+}
+
+#app [class*="main-recharge"] .ui-tab.is-active,
+#app [class*="main-recharge"] .ui-tab[aria-selected="true"],
+#app [class*="main-recharge"] [class*="ui-tabs__line"] {
+  color: #ffc107 !important;
+  border-color: #ffc107 !important;
+}
+
+/* Botões de valor (chips) */
+#app [class*="main-recharge"] [class*="recharge-type-grid"] button,
+#app [class*="main-recharge"] [class*="amount"] button,
+#app [class*="main-recharge"] .ui-button:not([class*="primary"]):not(.ui-button--primary),
+#app [class*="main-recharge"] button:not([class*="close"]):not(.btn-close) {
+  min-height: 74px !important;
+  border: 1px solid #464c54 !important;
+  border-radius: 10px !important;
+  background: #1c2027 !important;
+  color: #d7dbe0 !important;
+}
+
+/* Input de valor */
+#app [class*="main-recharge"] .ui-input,
+#app [class*="main-recharge"] input,
+#app [class*="main-recharge"] [class*="input"] {
+  background: #171b21 !important;
+  border: 1px solid #4b525b !important;
+  border-radius: 10px !important;
+  color: #c0c6cf !important;
+}
+
+/* Botão principal "Deposite agora" */
+#app [class*="main-recharge"] .ui-button--primary,
+#app [class*="main-recharge"] [class*="footer"] button,
+#app [class*="main-recharge"] button[class*="primary"],
+#app [class*="main-recharge"] .ui-button:last-of-type {
+  width: 100% !important;
+  height: 54px !important;
+  border-radius: 10px !important;
+  background: #ffbe00 !important;
+  color: #141414 !important;
+  font-size: 1.1rem !important;
+  font-weight: 500 !important;
+  margin-top: 14px !important;
+}
+
+/* Select/field do método PIX (gerentelan-PIX) */
+#app [class*="main-recharge"] .ui-select,
+#app [class*="main-recharge"] [class*="select"] {
+  background: #1c2027 !important;
+  border: 1px solid #4a4f57 !important;
+  border-radius: 10px !important;
+  color: #d7dbe0 !important;
+}
+
+/* Fallback: quando hash mudar, usar seletor por estrutura */
+#app [class*="_main-recharge_"] {
+  background: #5b5b5b !important;
+}
