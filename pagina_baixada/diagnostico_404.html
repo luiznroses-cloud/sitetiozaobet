@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Diagnóstico - 404 Detector</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .notfound { background: #f8d7da; padding: 10px; margin: 5px 0; border-radius: 3px; color: #721c24; }
+        .success { background: #d4edda; padding: 10px; margin: 5px 0; border-radius: 3px; color: #155724; }
+        h2 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Diagnóstico - Detectando 404s</h1>
+    <p>Abrindo <code>hiper.html</code> em iframe para detectar recursos que falharam...</p>
+    
+    <div id="results"></div>
+    
+    <h2>Carregando página...</h2>
+    
+    <script>
+        const results = document.getElementById('results');
+        
+        // Interceptar erros de rede glob
+        window.addEventListener('error', (event) => {
+            if (event.filename) {
+                results.innerHTML += `<div class="notfound">❌ Erro carregando: ${event.filename}</div>`;
+            }
+        }, true);
+        
+        // Carregar a página em um iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = 'hiper.html';
+        
+        iframe.onload = function() {
+            try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                
+                // Coletar todos os recursos
+                const resources = {
+                    scripts: Array.from(iframeDoc.querySelectorAll('script[src]')),
+                    links: Array.from(iframeDoc.querySelectorAll('link[rel="stylesheet"]')),
+                    images: Array.from(iframeDoc.querySelectorAll('img[src]')),
+                    iframes: Array.from(iframeDoc.querySelectorAll('iframe[src]'))
+                };
+                
+                results.innerHTML += '<h3>📋 Recursos encontrados:</h3>';
+                
+                // Verificar cada recurso
+                Promise.all([
+                    ...resources.scripts.map(s => checkUrl(s.src, 'Script')),
+                    ...resources.links.map(l => checkUrl(l.href, 'Stylesheet')),
+                    ...resources.images.map(i => checkUrl(i.src, 'Image')),
+                    ...resources.iframes.map(f => checkUrl(f.src, 'IFrame'))
+                ]).then(() => {
+                    results.innerHTML += '<h3>✅ Verificação concluída</h3>';
+                });
+                
+            } catch(e) {
+                results.innerHTML += `<div class="notfound">⚠️ Erro ao acessar iframe: ${e.message}</div>`;
+            }
+        };
+        
+        iframe.onerror = function() {
+            results.innerHTML += '<div class="notfound">❌ Erro ao carregar iframe</div>';
+        };
+        
+        document.body.appendChild(iframe);
+        
+        function checkUrl(url, type) {
+            return fetch(url, { method: 'HEAD' })
+                .then(r => {
+                    if (r.ok) {
+                        results.innerHTML += `<div class="success">✅ ${type}: ${url}</div>`;
+                    } else {
+                        results.innerHTML += `<div class="notfound">❌ ${type} (${r.status}): ${url}</div>`;
+                    }
+                })
+                .catch(e => {
+                    results.innerHTML += `<div class="notfound">❌ ${type} (erro): ${url}</div>`;
+                });
+        }
+    </script>
+</body>
+</html>

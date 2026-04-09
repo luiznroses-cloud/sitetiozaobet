@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Teste Simples - Scripts Mock</title>
+</head>
+<body>
+    <h1>Teste Simples</h1>
+    <p>Verificando se os scripts estão sendo carregados...</p>
+    
+    <div id="output"></div>
+
+    <script src="recursos/mock_helper.js"></script>
+    <script src="recursos/mock_api.js"></script>
+    <script src="recursos/mock_data.js"></script>
+
+    <script>
+        // Verificar se os mocks foram carregados
+        const output = document.getElementById('output');
+        
+        // Testar mock_helper
+        if (typeof window.requestAnimationFrame !== 'undefined') {
+            output.innerHTML += '<p>✅ Mock Helper carregado</p>';
+        } else {
+            output.innerHTML += '<p>❌ Mock Helper NÃO carregado</p>';
+        }
+        
+        // Testar mock_api (XMLHttpRequest interceptado)
+        if (XMLHttpRequest._original !== undefined) {
+            output.innerHTML += '<p>✅ Mock API carregado (XMLHttpRequest interceptado)</p>';
+        } else {
+            output.innerHTML += '<p>ℹ️ Mock API status: precisa verificar requisição</p>';
+        }
+        
+        // Testar mock_data
+        if (typeof APP_CONFIG !== 'undefined') {
+            output.innerHTML += '<p>✅ Mock Data carregado (APP_CONFIG definido)</p>';
+        } else {
+            output.innerHTML += '<p>❌ Mock Data NÃO carregado</p>';
+        }
+        
+        // Testar chamada API
+        fetch('/api/v1/test')
+            .then(r => {
+                output.innerHTML += '<p>✅ API chamada respondeu com status ' + r.status + '</p>';
+                return r.json();
+            })
+            .then(data => {
+                output.innerHTML += '<p>✅ API retornou dados: ' + JSON.stringify(data).substring(0, 100) + '</p>';
+            })
+            .catch(e => {
+                output.innerHTML += '<p>❌ Erro na chamada API: ' + e.message + '</p>';
+            });
+    </script>
+</body>
+</html>

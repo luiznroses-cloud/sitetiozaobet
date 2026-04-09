@@ -1,0 +1,91 @@
+<!DOCTYPE html><html lang="pt-BR" translate="no"><head>
+    <meta charset="utf-8">
+    <title></title>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="google" content="notranslate">
+
+    <!-- fonts.googleapis.com -->
+    <!-- Font family - Material Symbols Outlined -->
+    <link rel="stylesheet" as="style" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0..1,0&amp;icon_names=account_balance,account_balance_wallet,account_box,add,arrow_drop_down,arrow_drop_up,attach_money,autorenew,call_received,casino,check,check_circle,chevron_left,chevron_right,close,cloud_upload,content_copy,content_paste,credit_card,date_range,delete,device_unknown,done_all,drag_handle,email,emoji_events,equalizer,error_outline,event,exit_to_app,fast_rewind,flag,format_list_numbered,fullscreen,fullscreen_exit,headset_mic,help,history,home,info,joystick,keyboard_arrow_right,link,live_tv,logout,memory,menu,mode_comment,more_horiz,more_vert,mouse,person,person_outline,person_pin,phone_iphone,radio_button_unchecked,redeem,remove,report_problem,schedule,search,send,settings,settings_applications,sports_esports,sports_soccer,stacked_line_chart,star,star_border,stars,stream,supervisor_account,swap_vert,sync_alt,timeline,timer,today,trending_down,tune,unfold_more,video_camera_front,videocam,view_column,view_list,view_module,view_stream,visibility,wallet,warning" onload="this.onload=null;this.rel='stylesheet';" crossorigin="anonymous">
+    <!-- Font family - Inter -->
+    <link rel="stylesheet" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'" crossorigin="anonymous">
+
+    <link rel="shortcut icon" href="recursos/recurso_3.ico">
+    <link rel="preload" as="image" href="recursos/recurso_2.png">
+    <link rel="preload" as="image" href="recursos/recurso_4.gif">
+    <link rel="dns-prefetch" href="//static.sportingtech.com">
+    <link rel="dns-prefetch" href="//img-cdn001.akamaized.net">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+
+    <script>
+      window.prerenderReady = false;
+    </script>
+    <script src="recursos/mock_helper.js"></script>
+    <script src="recursos/mock_api.js"></script>
+    <script src="recursos/mock_data.js"></script>
+    <script>
+      setTimeout(() => {
+        // Timeout to be sure that the body is created
+        const userAgent = window.navigator.userAgent;
+        if (userAgent.includes('Firefox/')) {
+          showMessage('Firefox/', 63); // Firefox >= 63
+        } else if (userAgent.includes('Edg/')) {
+          showMessage('Edg/', 80); // Edge (Chromium) >= 80
+        } else if (userAgent.includes('Chrome/')) {
+          showMessage('Chrome/', 66); // Chrome >= 66
+        } else if (userAgent.includes('Version/')) {
+          showMessage('Version/', 11); // Safari >= 11
+        }
+
+        function showMessage(browser, minimalVersion) {
+          const agent = userAgent.split(browser)[1];
+          const version = agent.split('.')[0];
+          if (version < minimalVersion) {
+            const body = document.getElementsByTagName('body')[0];
+            if (body) {
+              body.style.backgroundColor = '#ffffff';
+              const text = document.createElement('div');
+              text.innerHTML = `<div style="padding: 10px">
+              <h2 style="font-size: 1.3em; color: #000000;">Please upgrade your browser and OS version</h2>
+              <p style="margin-bottom: 40px; color: #000000">For the best experience using our website please upgrade to a newer web browser and OS version</p>
+              <h2 style="font-size: 1.3em; color: #000000;">Por favor atualiza seu navegador e a mais recente versão do Sistema Operativo</h2>
+              <p style="margin-bottom: 40px; color: #000000">Por melhor experiência ao usar o nosso site por favor atualiza o teu dispositivo para a mais recente versão do navegador e do Sistema Operativo</p>
+              <h2 style="font-size: 1.3em; color: #000000;">Tafadhali pata toleo jipya la browser yako na toleo la OS</h2>
+              <p style="color: #000000">Kwa matumizi bora zaidi ya tovuti yetu tafadhali pata toleo jipya la browser na toleo la OS</p>
+              </div>`;
+              body.appendChild(text);
+            }
+          }
+        }
+      }, 2000);
+    </script>
+    <style>
+      .grecaptcha-badge {
+        visibility: hidden;
+      }
+    </style>
+    <!--og-->
+    <!--no pwa-->
+    <!--freeHeadMetaTags-->
+  <style>@import"https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900&subset=latin,latin-ext";@import"https://fonts.googleapis.com/css?family=Montserrat:500,700";@import"https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap";html{font-family:sans-serif;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}body{margin:0}html{box-sizing:border-box}*,*:before,*:after{box-sizing:inherit}@font-face{font-family:Roboto;src:local(Roboto Thin),url(Roboto-Thin.634a882cd277ed33.woff2) format("woff2"),url(Roboto-Thin.5ba1658a8ee4d031.woff) format("woff");font-weight:100}@font-face{font-family:Roboto;src:local(Roboto Light),url(Roboto-Light.fe852181f10ba289.woff2) format("woff2"),url(Roboto-Light.201862a39410e642.woff) format("woff");font-weight:300}@font-face{font-family:Roboto;src:local(Roboto Regular),url(Roboto-Regular.03f8db3c3da62e90.woff2) format("woff2"),url(Roboto-Regular.fb9e4e04f73c4e3c.woff) format("woff");font-weight:400}@font-face{font-family:Roboto;src:local(Roboto Medium),url(Roboto-Medium.ca5d4532c7174117.woff2) format("woff2"),url(Roboto-Medium.6ce1c82504b2a9a8.woff) format("woff");font-weight:500}@font-face{font-family:Roboto;src:local(Roboto Bold),url(Roboto-Bold.d85e4fca0959a13c.woff2) format("woff2"),url(Roboto-Bold.089fa2ccdbefc435.woff) format("woff");font-weight:700}html{line-height:1.5;font-family:Roboto,sans-serif;font-weight:400;color:#000000de}@media only screen and (min-width: 0){html{font-size:14px}}@media only screen and (min-width: 992px){html{font-size:14.5px}}@media only screen and (min-width: 1200px){html{font-size:15px}}@charset "UTF-8";body{min-width:1024px}body{background:#000}html{font-family:Inter;font-optical-sizing:auto;font-style:normal;letter-spacing:normal}body{text-rendering:optimizeLegibility;letter-spacing:-.3px;-webkit-font-smoothing:antialiased}*{-webkit-overflow-scrolling:touch}:root{--sk-size:40px}:root{--bet-win-color:#009411;--bet-lost-color:#fd0404;--bet-live-color:#ffe500}body{background-color:#06024f;background-size:contain;background-repeat:repeat;--timeline-font-size:14px;--timeline-pad-start:0;--timeline-item-padding-inline:18px;--timeline-item-gap:20px;--timeline-dot-size:8px;--timeline-dot-radius:50%;--timeline-dot-offset-top:8px;--timeline-dot-color:#6a6795;--timeline-line-width:.257px;--timeline-line-color:rgba(255, 255, 255, .4);--timeline-line-start-offset:12px;--item-text:#fff;--team-name:#e2e4e6;--match-time-text:rgba(255, 255, 255, .6)}body *::-webkit-scrollbar{width:5px;height:5px}body *::-webkit-scrollbar-button{width:0px;height:0px}body *::-webkit-scrollbar-thumb{background:#e1e1e1;border:5px none #fff;border-radius:50px}body *::-webkit-scrollbar-thumb:hover{background:#fff}body *::-webkit-scrollbar-thumb:active{background:#000}body *::-webkit-scrollbar-track{background:#666;border:5px none #fff;border-radius:50px}body *::-webkit-scrollbar-track:hover{background:#666}body *::-webkit-scrollbar-track:active{background:#343434}body *::-webkit-scrollbar-corner{background:transparent}:root{--games-wrapper-max-width:775px;--vendors-wrapper-max-width:744px}@media screen and (min-width: 1200px){:root{--games-wrapper-max-width:964px;--vendors-wrapper-max-width:931px}}@media screen and (min-width: 1430px){:root{--games-wrapper-max-width:1153px;--vendors-wrapper-max-width:1116px}}@media screen and (min-width: 1619px){:root{--games-wrapper-max-width:1342px;--vendors-wrapper-max-width:1302px}}@media screen and (min-width: 1808px){:root{--games-wrapper-max-width:1531px;--vendors-wrapper-max-width:1488px}}@media screen and (min-width: 1997px){:root{--games-wrapper-max-width:1720px;--vendors-wrapper-max-width:1674px}}@media screen and (min-width: 2186px){:root{--games-wrapper-max-width:1909px;--vendors-wrapper-max-width:1860px}}@media screen and (min-width: 2375px){:root{--games-wrapper-max-width:2098px;--vendors-wrapper-max-width:2046px}}@media screen and (min-width: 2505px){:root{--games-wrapper-max-width:2284px;--vendors-wrapper-max-width:2232px}}@media screen and (min-width: 2694px){:root{--games-wrapper-max-width:2474px;--vendors-wrapper-max-width:2418px}}@media screen and (min-width: 2883px){:root{--games-wrapper-max-width:2663px;--vendors-wrapper-max-width:2604px}}@media screen and (min-width: 3072px){:root{--games-wrapper-max-width:2851px;--vendors-wrapper-max-width:2790px}}@media screen and (min-width: 3261px){:root{--games-wrapper-max-width:3041px;--vendors-wrapper-max-width:2976px}}@media screen and (min-width: 3493px){:root{--games-wrapper-max-width:3230px;--vendors-wrapper-max-width:3162px}}@media screen and (min-width: 3639px){:root{--games-wrapper-max-width:3419px;--vendors-wrapper-max-width:3348px}}@media screen and (min-width: 3828px){:root{--games-wrapper-max-width:3608px;--vendors-wrapper-max-width:3534px}}</style><link rel="stylesheet" href="recursos/recurso_8.css" media="all" onload="this.media='all'"><noscript><link rel="stylesheet" href="recursos/recurso_8.css"></noscript><link rel="canonical" href="https://hiper.bet.br/ptb/bet/main"></head>
+  <body id="trader-hiperbetbrasil" class="platform-st">
+    <app-root ng-version="15.2.9"><router-outlet><preloader><div id="preloader"><div><div class="preloader-logo"><!----><img src="recursos/recurso_2.png" alt="logo"><!----><!----></div><!----><div class="preloader-gif"><img src="recursos/recurso_4.gif" alt="loading"></div></div></div><!----></preloader></router-outlet><app-out-component><!----><div id="sticky-container"><app-header><!----><header id="header" header-resize="" class="clear"><div class="fix-demo-header"><div><a href="https://landing.sportingtech.com"><i aria-hidden="true" class="fa fa-home"></i></a></div><div><a href="https://landing.sportingtech.com"><i class="material-symbols-outlined demo-close">close</i></a></div></div><div class="hdr-cntr flex-container align-items-res"><div class="hdr-right-cntr flex-item"><div class="hdr-center clear fix-hide"><a class="lg-cntr left"><img src="recursos/recurso_2.png" class="lg"></a><div class="social-wrapper"><social-links classes="social"><ul><!----><!----><!----><!----><!----><!----><!----></ul></social-links></div><div class="hdr-usr-mn right"><div class="hdr-other-btn"><!----></div><!----><!----></div></div><div id="menu-wrapper" class="hdr-bottom clear"><a name="logo" data-test="header-logo" class="lg-cntr left fix-show" style="display: none;"><img src="recursos/recurso_2.png" class="lg"></a><div class="mn-menu left"><ul data-element="mn-cont" class="clear"><li><a routerlinkactive="active" data-test="header-menu-button-home" class="waves-effect waves-light"><i class="material-symbols-outlined">home</i></a></li><!----><!----><li data-order="3"><a routerlinkactive="active" data-test="header-menu-button-casino" class="waves-effect waves-light"></a></li><!----><li data-order="4"><a routerlinkactive="active" data-test="header-menu-button-live-casino" class="waves-effect waves-light"></a></li><!----><!----><!----><!----><!----><!----><!----><!----><!----><!----><!----><!----><li data-order="17"><a routerlinkactive="active" data-test="header-menu-button-promotions" class="waves-effect waves-light"></a></li><!----><!----><!----><li data-element="dropdown-wrapper" style="display: none;"><a href="javascript:;" materialize="dropdown" data-activates="dropdown-responsive-menu" data-test="header-menu-button-arrow-dropdown" class="waves-effect waves-light dropdown-button"><span data-element="dropdown-button" class="menu-count">+0</span><i class="material-symbols-outlined right pg-icons">arrow_drop_down</i></a><ul id="dropdown-responsive-menu" data-element="dropdown-container" class="dropdown-content"></ul></li></ul></div><div data-element="usr-mn" class="hdr-usr-mn clear right"><div class="fix-show" style="display: none;"><!----><!----></div></div></div></div></div><!----><!----><app-static-inner-content contentcode="header-static"><!----></app-static-inner-content></header></app-header><main><router-outlet></router-outlet><!----></main><!----><!----></div><div id="mbl-verify-needed" materialize="modal" class="modal"><a href="javascript:;" class="modal-action modal-close"><i class="material-symbols-outlined pg-icons">close</i></a><br><div class="modal-content"><div></div><div></div><a class="btn primary-color"></a><a href="javascript:;" class="btn dont-show-again secondary-color right"></a></div></div><div id="cookies-top-modal" materialize="modal" class="modal bottom-sheet" style="width: 100%; background: black; color: white; padding: 20px; top: 0;"><div class="modal-content"><div class="flex-container"><div class="flex-item"></div><a href="javascript:;" class="btn dont-show-again secondary-color"></a></div><div></div></div></div><div id="cookies-bottom-modal" materialize="modal" class="modal bottom-sheet" style="width: 100%; background: black; color: white; padding: 20px; bottom: 0;"><div class="modal-content"><div class="flex-container content"><div></div><a href="javascript:;" class="btn dont-show-again secondary-color cookies-btn"></a></div><div></div></div></div><div id="mdl-on-enter" materialize="modal" class="modal"><a href="javascript:;" class="modal-action modal-close"><i class="material-symbols-outlined pg-icons">close</i></a><br><div class="modal-content"><div></div><div></div><a href="javascript:;" class="btn dont-show-again"></a></div></div><div id="home-page-modal" materialize="modal" class="modal"><a href="javascript:;" class="modal-action modal-close"><i class="material-symbols-outlined pg-icons">close</i></a><br><div class="modal-content"><div></div><div></div><a href="javascript:;" class="btn dont-show-again"></a></div></div><div id="mdl-on-login" materialize="modal" class="modal"><a href="javascript:;" class="modal-action modal-close"><i class="material-symbols-outlined pg-icons">close</i></a><br><div class="modal-content"><div></div><div></div><a href="javascript:;" class="btn dont-show-again"></a></div></div><div materialize="modal"><!----><!----><!----><div class="modal-content"><!----></div></div></app-out-component><!----><!----><!----></app-root>
+    <noscript>Please enable JavaScript to continue using this application.</noscript>
+    <div style="
+        display: none;
+        text-align: center;
+        text-transform: uppercase;
+        position: sticky;
+        z-index: 99999;
+        bottom: 0;
+        background-color: black;
+        color: white;
+        font-size: xx-small;
+      " id="sha-container">
+      ver: 0.3.7.8.4.4.4-0be92e9
+    </div>
+  <script src="recursos/recurso_5.js" type="module"></script><script src="recursos/recurso_6.js" type="module"></script><script src="recursos/recurso_1.js" defer=""></script><script src="recursos/recurso_7.js" type="module"></script>
+
+<div class="hiddendiv common"></div></body></html>

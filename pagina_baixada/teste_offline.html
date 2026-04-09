@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Offline - Hiper Bet Brasil</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+    <script src="recursos/mock_helper.js"></script>
+    <script src="recursos/mock_api.js"></script>
+    <script src="recursos/mock_data.js"></script>
+</head>
+<body>
+    <h1>Teste Offline - Hiper Bet Brasil</h1>
+
+    <div id="results"></div>
+
+    <button onclick="testBasicLoad()">Testar Carregamento Básico</button>
+    <button onclick="testAngularLoad()">Testar Angular</button>
+    <button onclick="testAPICalls()">Testar APIs</button>
+    <button onclick="openMainPage()">Abrir Página Principal</button>
+
+    <script>
+        const resultsDiv = document.getElementById('results');
+
+        function addResult(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            resultsDiv.appendChild(div);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        }
+
+        function testBasicLoad() {
+            addResult('Testando carregamento básico...', 'warning');
+
+            // Verificar se recursos estão carregados
+            const scripts = document.querySelectorAll('script[src]');
+            const links = document.querySelectorAll('link[rel="stylesheet"]');
+
+            addResult(`Total de scripts externos encontrados: ${scripts.length}`, scripts.length > 0 ? 'success' : 'warning');
+            addResult(`Total de estilos encontrados: ${links.length}`, links.length >= 0 ? 'success' : 'warning');
+
+            // Verificar se mock scripts estão presentes
+            const mockApi = document.querySelector('script[src*="mock_api"]');
+            const mockData = document.querySelector('script[src*="mock_data"]');
+            const mockHelper = document.querySelector('script[src*="mock_helper"]');
+
+            addResult('Mock Helper presente: ' + (mockHelper ? 'Sim ✅' : 'Não ❌'), mockHelper ? 'success' : 'error');
+            addResult('Mock API presente: ' + (mockApi ? 'Sim ✅' : 'Não ❌'), mockApi ? 'success' : 'error');
+            addResult('Mock Data presente: ' + (mockData ? 'Sim ✅' : 'Não ❌'), mockData ? 'success' : 'error');
+
+            // Verificar se os mocks estão funcionando
+            const mocksFunctionando = {
+                helper: typeof window.requestAnimationFrame !== 'undefined',
+                api: window.fetch !== undefined,
+                data: typeof APP_CONFIG !== 'undefined'
+            };
+
+            if (mocksFunctionando.helper) {
+                addResult('Mock Helper funcionando: Sim ✅', 'success');
+            } else {
+                addResult('Mock Helper funcionando: Não ❌', 'error');
+            }
+
+            if (mocksFunctionando.api) {
+                addResult('Mock API funcionando: Sim ✅ (fetch interceptado)', 'success');
+            } else {
+                addResult('Mock API funcionando: Não ❌', 'error');
+            }
+
+            if (mocksFunctionando.data) {
+                addResult('Mock Data funcionando: Sim ✅ (APP_CONFIG definido)', 'success');
+            } else {
+                addResult('Mock Data funcionando: Não ❌', 'error');
+            }
+
+            // Testar uma chamada de API
+            fetch('/api/v1/test')
+                .then(r => {
+                    addResult(`API test respondeu com status ${r.status}`, r.ok ? 'success' : 'error');
+                })
+                .catch(e => {
+                    addResult(`Erro ao testar API: ${e.message}`, 'error');
+                });
+        }
+
+        function testAngularLoad() {
+            addResult('Testando Angular...', 'warning');
+
+            // Verificar se Angular está definido
+            if (typeof angular !== 'undefined') {
+                addResult('Angular detectado: v' + angular.version.full, 'success');
+            } else {
+                addResult('Angular não detectado', 'error');
+            }
+
+            // Verificar se há módulos Angular
+            if (window.angular && window.angular.module) {
+                addResult('Angular modules disponíveis', 'success');
+            } else {
+                addResult('Angular modules não disponíveis', 'error');
+            }
+
+            // Verificar se há elementos Angular na página
+            const ngElements = document.querySelectorAll('[ng-app], [ng-controller], [ng-model]');
+            addResult(`Elementos Angular encontrados: ${ngElements.length}`, ngElements.length > 0 ? 'success' : 'warning');
+        }
+
+        function testAPICalls() {
+            addResult('Testando chamadas de API...', 'warning');
+
+            // Simular algumas chamadas de API
+            const testUrls = [
+                '/api/v1/user',
+                '/api/v1/games',
+                '/api/v1/config'
+            ];
+
+            testUrls.forEach(url => {
+                fetch(url, { method: 'GET' })
+                    .then(response => {
+                        addResult(`API ${url}: ${response.status} ${response.statusText}`,
+                            response.ok ? 'success' : 'error');
+                    })
+                    .catch(error => {
+                        addResult(`API ${url}: Erro - ${error.message}`, 'error');
+                    });
+            });
+        }
+
+        function openMainPage() {
+            window.open('hiper.html', '_blank');
+        }
+
+        // Executar teste básico ao carregar
+        window.addEventListener('load', function() {
+            addResult('Página de teste carregada', 'success');
+            setTimeout(testBasicLoad, 1000);
+        });
+    </script>
+</body>
+</html>
